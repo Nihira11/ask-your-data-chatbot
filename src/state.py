@@ -1,17 +1,13 @@
-"""State carried between the planned LangGraph steps."""
+"""Serializable response records persisted with their source dataset."""
+from typing import TypedDict, Any
 
-from typing import Any, TypedDict
 
-
-class AgentState(TypedDict, total=False):
-    question: str
-    schema: str
-    context: list[dict[str, str]]
-    sql: str
-    columns: list[str]
-    rows: list[dict[str, Any]]
-    result_truncated: bool
-    clarification: str
-    error: str
-    retry_count: int
+class Answer(TypedDict, total=False):
     answer: str
+    status: str
+    mode: str
+    dataset_id: str
+    queries: list[dict[str, Any]]
+    sources: list[dict[str, str]]
+    error: str
+    usage: dict[str, int]

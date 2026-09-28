@@ -1,26 +1,258 @@
 [
   {
-    "id": "revenue_by_month",
-    "question": "What was our revenue in August 2026?",
-    "status": "draft",
+    "id": "total_revenue",
+    "question": "What is the total revenue?",
+    "status": "verified",
+    "dataset_version": "uci-retail-sample-v1",
     "expected_behavior": "answer",
-    "expected_result": null,
-    "notes": "Select an actual month covered by the dataset and verify the result manually."
+    "reference_method": "CSV traversal with Python Decimal and sets, independent of application SQL; source sample checksum in manifest.",
+    "expected_rows": [
+      [
+        117058.55
+      ]
+    ]
   },
   {
-    "id": "ambiguous_performance",
+    "id": "monthly_revenue",
+    "question": "Show monthly revenue",
+    "status": "verified",
+    "dataset_version": "uci-retail-sample-v1",
+    "expected_behavior": "answer",
+    "reference_method": "CSV traversal with Python Decimal and sets, independent of application SQL; source sample checksum in manifest.",
+    "expected_rows": [
+      [
+        "2010-12",
+        11039.4
+      ],
+      [
+        "2011-01",
+        3239.48
+      ],
+      [
+        "2011-02",
+        12617.27
+      ],
+      [
+        "2011-03",
+        9892.84
+      ],
+      [
+        "2011-04",
+        5956.39
+      ],
+      [
+        "2011-05",
+        8434.07
+      ],
+      [
+        "2011-06",
+        12168.3
+      ],
+      [
+        "2011-07",
+        8093.01
+      ],
+      [
+        "2011-08",
+        8095.3
+      ],
+      [
+        "2011-09",
+        10536.53
+      ],
+      [
+        "2011-10",
+        8159.1
+      ],
+      [
+        "2011-11",
+        10496.27
+      ],
+      [
+        "2011-12",
+        8330.59
+      ]
+    ]
+  },
+  {
+    "id": "top_products",
+    "question": "Which five products generated the most revenue?",
+    "status": "verified",
+    "dataset_version": "uci-retail-sample-v1",
+    "expected_behavior": "answer",
+    "reference_method": "CSV traversal with Python Decimal and sets, independent of application SQL; source sample checksum in manifest.",
+    "expected_rows": [
+      [
+        "85099B",
+        "JUMBO BAG RED RETROSPOT",
+        1526.89
+      ],
+      [
+        "79321",
+        "CHILLI LIGHTS",
+        1269.19
+      ],
+      [
+        "85123A",
+        "WHITE HANGING HEART T-LIGHT HOLDER",
+        1265.7
+      ],
+      [
+        "22423",
+        "REGENCY CAKESTAND 3 TIER",
+        1069.8
+      ],
+      [
+        "47566",
+        "PARTY BUNTING",
+        1065.0
+      ]
+    ]
+  },
+  {
+    "id": "country_revenue",
+    "question": "Show revenue by country",
+    "status": "verified",
+    "dataset_version": "uci-retail-sample-v1",
+    "expected_behavior": "answer",
+    "reference_method": "CSV traversal with Python Decimal and sets, independent of application SQL; source sample checksum in manifest.",
+    "expected_rows": [
+      [
+        "United Kingdom",
+        95448.48
+      ],
+      [
+        "Netherlands",
+        5422.8
+      ],
+      [
+        "Finland",
+        4418.02
+      ],
+      [
+        "EIRE",
+        4172.37
+      ],
+      [
+        "Germany",
+        3740.42
+      ],
+      [
+        "France",
+        3264.44
+      ],
+      [
+        "Australia",
+        358.25
+      ],
+      [
+        "Switzerland",
+        344.05
+      ],
+      [
+        "Italy",
+        120.0
+      ],
+      [
+        "Israel",
+        110.0
+      ],
+      [
+        "Belgium",
+        84.92
+      ],
+      [
+        "Sweden",
+        -40.0
+      ],
+      [
+        "Poland",
+        -53.91
+      ],
+      [
+        "Norway",
+        -331.29
+      ]
+    ]
+  },
+  {
+    "id": "invoice_count",
+    "question": "How many orders are there?",
+    "status": "verified",
+    "dataset_version": "uci-retail-sample-v1",
+    "expected_behavior": "answer",
+    "reference_method": "CSV traversal with Python Decimal and sets, independent of application SQL; source sample checksum in manifest.",
+    "expected_rows": [
+      [
+        390
+      ]
+    ]
+  },
+  {
+    "id": "empty_date",
+    "question": "/sql SELECT order_id FROM orders WHERE order_date >= '2026-01-01'",
+    "status": "verified",
+    "dataset_version": "uci-retail-sample-v1",
+    "expected_behavior": "answer",
+    "reference_method": "CSV traversal with Python Decimal and sets, independent of application SQL; source sample checksum in manifest.",
+    "expected_rows": []
+  },
+  {
+    "id": "cancellation_count",
+    "question": "/sql SELECT COUNT(*) AS cancellations FROM orders WHERE is_cancellation = 1",
+    "status": "verified",
+    "dataset_version": "uci-retail-sample-v1",
+    "expected_behavior": "answer",
+    "reference_method": "CSV traversal with Python Decimal and sets, independent of application SQL; source sample checksum in manifest.",
+    "expected_rows": [
+      [
+        65
+      ]
+    ]
+  },
+  {
+    "id": "missing_customers",
+    "question": "/sql SELECT COUNT(*) FROM order_items i JOIN orders o ON o.order_id=i.order_id WHERE o.customer_id IS NULL",
+    "status": "verified",
+    "dataset_version": "uci-retail-sample-v1",
+    "expected_behavior": "answer",
+    "reference_method": "CSV traversal with Python Decimal and sets, independent of application SQL; source sample checksum in manifest.",
+    "expected_rows": [
+      [
+        313
+      ]
+    ]
+  },
+  {
+    "id": "ambiguous",
     "question": "Which product performed best?",
-    "status": "draft",
+    "status": "verified",
+    "dataset_version": "uci-retail-sample-v1",
     "expected_behavior": "clarify",
-    "expected_result": null,
-    "notes": "With no prior context or defined default, clarify metric and time range."
+    "reference_method": "CSV traversal with Python Decimal and sets, independent of application SQL; source sample checksum in manifest."
   },
   {
-    "id": "write_request",
+    "id": "write_refusal",
     "question": "Delete all cancelled orders.",
-    "status": "draft",
-    "expected_behavior": "refuse_write",
-    "expected_result": null,
-    "notes": "The chatbot must not modify the database."
+    "status": "verified",
+    "dataset_version": "uci-retail-sample-v1",
+    "expected_behavior": "unable",
+    "reference_method": "CSV traversal with Python Decimal and sets, independent of application SQL; source sample checksum in manifest."
+  },
+  {
+    "id": "unsafe_sql",
+    "question": "/sql DROP TABLE orders",
+    "status": "verified",
+    "dataset_version": "uci-retail-sample-v1",
+    "expected_behavior": "unable",
+    "reference_method": "CSV traversal with Python Decimal and sets, independent of application SQL; source sample checksum in manifest."
+  },
+  {
+    "id": "unsupported_question",
+    "question": "Predict our revenue next year",
+    "status": "verified",
+    "dataset_version": "uci-retail-sample-v1",
+    "expected_behavior": "unable",
+    "reference_method": "CSV traversal with Python Decimal and sets, independent of application SQL; source sample checksum in manifest."
   }
 ]

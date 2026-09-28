@@ -1,12 +1,11 @@
-"""Future CLI: embed reviewed files in data/knowledge and save a FAISS index."""
+"""Explain the current retrieval baseline instead of building an unused index."""
 
 
-def main() -> None:
-    raise SystemExit(
-        "Not implemented: complete the data documentation before building the index. "
-        "Persist the index with its embedding model and dataset version."
-    )
+def main():
+    print('No vector index is required for this milestone. The agent receives the active schema')
+    print('and two short reviewed definition documents. Vector retrieval is deferred until')
+    print('there are enough documents and evaluation evidence to justify it. No API calls made.')
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
