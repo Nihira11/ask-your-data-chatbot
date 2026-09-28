@@ -1,0 +1,12 @@
+-r requirements.txt
+
+# Install when implementing the agent backend.
+openai
+langgraph
+langchain-openai
+python-dotenv
+sqlalchemy
+psycopg[binary]
+faiss-cpu
+numpy
+sqlglot
