@@ -1,16 +1,11 @@
-# Tests to add with implementation
+# Tests
 
-No implementation tests have been written yet.
+Run `.venv/bin/python -m pytest -q` from the repository root.
+Tests use temporary SQLite databases, source CSV/Decimal reconciliation, a mocked SDK
+runner, and Textual's headless Pilot. They make no paid model calls and do not use
+private CSVs or normal chat history.
 
-Prioritise meaningful checks for SQL validation and execution:
-
-- Allowed aggregation, joins, and read-only CTEs work.
-- Multiple statements, writes, data-modifying CTEs, prohibited tables, and
-  prohibited functions are rejected.
-- Database permissions still prevent writes if application validation fails.
-- Database-side timeouts cancel expensive queries.
-- Result limits are enforced and truncation is disclosed.
-- Clarification and retry limits work in the complete workflow.
-
-Use synthetic data and mocked model responses for ordinary automated tests.
-Keep any paid live-model evaluations separate and explicitly invoked.
+`python -m evaluation.evaluate` runs 12 deterministic offline reference cases.
+These are regression checks, not a live LLM benchmark. Questions marked draft are
+rejected. Add a separate explicitly invoked live-model runner before reporting model
+accuracy, follow-up success, latency or cost.
