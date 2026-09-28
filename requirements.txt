@@ -1,2 +1,4 @@
-# Enough to run the initial interface preview.
-streamlit
+# Local terminal app; no API dependency or credentials required.
+textual==8.2.8
+sqlglot==30.20.0
+python-dotenv==1.2.3

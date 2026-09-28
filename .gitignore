@@ -27,4 +27,9 @@ evaluation/results/
 # System and editor files
 .DS_Store
 .idea/
-.vscode/
+.vscode/*
+!.vscode/settings.json
+
+# Personal planning documents (kept locally, not published)
+ask-your-data-final-product.pdf
+ask-your-data-project-plan.pdf
