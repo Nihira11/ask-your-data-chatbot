@@ -60,3 +60,47 @@ def test_dataset_switch_and_chat_isolation(store, simple_dataset, tmp_path):
 def test_path_traversal_is_rejected(store):
     with pytest.raises(ValueError):
         store.dataset_path('../../outside')
+
+
+def test_empty_cleanup_preserves_messages_and_csv_setup(store, simple_dataset):
+    from src.sample import ensure_sample
+    sample = ensure_sample(store)
+    empty = store.new_chat(sample)
+    used = store.new_chat(sample)
+    store.append(used, sample, 'user', {'answer': 'a question'})
+    configured = store.new_chat(sample)
+    store.activate(configured, sample)
+    csv_chat = store.new_chat(simple_dataset)
+    assert store.discard_empty_chat(empty)
+    assert not store.discard_empty_chat(used)
+    assert not store.discard_empty_chat(configured)
+    assert not store.discard_empty_chat(csv_chat)
+    assert {chat['id'] for chat in store.chats()} == {used, configured, csv_chat}
+    assert store.dataset_path(sample).exists()
+
+
+def test_mixed_integer_decimal_columns_sort_numerically_but_ids_remain_text(store, tmp_path):
+    path = tmp_path / 'mixed.csv'
+    path.write_text('amount,id,mixed,large_id\n9.5,001,2,9223372036854775808\n50,002,N/A,9223372036854775809\n3.25,003,4,9223372036854775810\n')
+    inspected = inspect_csv(path)
+    assert inspected['types'] == ['REAL', 'TEXT', 'TEXT', 'TEXT']
+    dataset = import_csv(store, inspected)
+    assert run_query(store.dataset_path(dataset), 'SELECT amount FROM records ORDER BY amount DESC')['rows'] == [[50.0], [9.5], [3.25]]
+
+
+def test_reimport_upgrades_old_types_without_mutating_saved_dataset(store, tmp_path):
+    from src.database import get_schema
+    path = tmp_path / 'legacy.csv'
+    path.write_text('amount\n9.5\n50\n')
+    old_inspection = inspect_csv(path)
+    old_inspection['types'] = ['TEXT']
+    old = import_csv(store, old_inspection)
+    chat = store.new_chat(old)
+    store.save_definitions(chat, 'amount means total paid.')
+    fresh = import_csv(store, inspect_csv(path))
+    assert fresh != old
+    assert get_schema(store.dataset_path(old))['records'][0]['type'] == 'TEXT'
+    assert get_schema(store.dataset_path(fresh))['records'][0]['type'] == 'REAL'
+    assert store.dataset(fresh)['metadata']['confirmed_definitions'] == 'amount means total paid.'
+    assert store.chat(chat)['dataset_id'] == old
+    assert import_csv(store, inspect_csv(path)) == fresh

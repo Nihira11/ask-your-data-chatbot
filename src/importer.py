@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import io
+import json
 import math
 import re
 import sqlite3
@@ -10,7 +12,7 @@ import uuid
 from contextlib import closing
 from pathlib import Path
 
-from src.database import quote
+from src.database import get_schema, quote
 from src.storage import Store
 
 MAX_BYTES = 5 * 1024 * 1024
@@ -61,13 +63,42 @@ def inspect_csv(path: Path) -> dict:
         present = [v for v in values if v is not None]
         # Leading zeros are identifiers, never numbers. Mixed types stay as text.
         integer = present and all(re.fullmatch(r'-?(0|[1-9]\d*)', v) and -(2**63) <= int(v) < 2**63 for v in present)
-        real = present and all(re.fullmatch(r'-?(0|[1-9]\d*)\.\d+', v) and math.isfinite(float(v)) for v in present)
+        real = (present and any('.' in v for v in present)
+                and all(re.fullmatch(r'-?(0|[1-9]\d*)(\.\d+)?', v)
+                        and math.isfinite(float(v))
+                        and ('.' in v or -(2**63) <= int(v) < 2**63) for v in present))
         types.append('INTEGER' if integer else 'REAL' if real else 'TEXT')
     return {'name': source.name, 'headers': headers, 'types': types, 'rows': rows, 'raw': raw,
             'null_counts': {h: sum(row[i] is None for row in rows) for i, h in enumerate(headers)}}
 
 
 def import_csv(store: Store, inspected: dict) -> str:
+    fingerprint = hashlib.sha256(inspected['raw']).hexdigest()
+    # An exact re-upload is the same immutable dataset, including its definitions.
+    # Older imports lack a fingerprint, so compare their retained source copy.
+    with store.connect() as db:
+        previous = db.execute("SELECT id, metadata FROM datasets WHERE kind = 'csv' ORDER BY rowid DESC").fetchall()
+    inherited = {}
+    for row in previous:
+        existing_path = store.dataset_path(row['id'])
+        if not existing_path.is_file():
+            continue
+        metadata = json.loads(row['metadata'])
+        existing_hash = metadata.get('content_sha256')
+        if not existing_hash:
+            source_copy = existing_path.with_suffix('.csv')
+            if source_copy.is_file() and source_copy.stat().st_size <= MAX_BYTES:
+                existing_hash = hashlib.sha256(source_copy.read_bytes()).hexdigest()
+        if existing_hash == fingerprint:
+            schema = get_schema(existing_path).get('records', [])
+            expected = list(zip(inspected['headers'], inspected['types']))
+            if [(c['name'], c['type']) for c in schema] == expected:
+                return row['id']
+            # Improved type inference creates a fresh snapshot. Keep old chats'
+            # database untouched and carry the user-confirmed meanings forward.
+            inherited = {key: metadata[key] for key in ('confirmed_definitions', 'definitions_revision')
+                         if key in metadata}
+            break
     dataset_id = uuid.uuid4().hex
     path = store.dataset_path(dataset_id)
     copy = path.with_suffix('.csv')
@@ -78,6 +109,8 @@ def import_csv(store: Store, inspected: dict) -> str:
             db.executemany(f'INSERT INTO records VALUES ({", ".join("?" for _ in inspected["headers"])})', inspected['rows'])
         copy.write_bytes(inspected['raw'])
         store.add_dataset(dataset_id, inspected['name'], 'csv', {
+            **inherited,
+            'content_sha256': fingerprint,
             'row_count': len(inspected['rows']), 'null_counts': inspected['null_counts'],
             'definitions': 'One row is one CSV record. Blank cells are NULL. Column meanings and units have not been confirmed. Ask before assuming financial or business definitions. Dates are stored as text; inspect their format before filtering.',
         })

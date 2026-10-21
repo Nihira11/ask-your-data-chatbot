@@ -39,6 +39,10 @@ def validate_sql(sql: str, allowed_tables: set[str]) -> str:
         if table.name.lower() not in permitted | ctes:
             raise QueryValidationError(f'Table {table.name!r} is not in the active dataset.')
     for func in tree.find_all(exp.Func):
+        # SQLGlot models these SQL operators as Func nodes. They are not
+        # callable functions; their nested expressions are still checked below.
+        if isinstance(func, (exp.And, exp.Or, exp.Case)):
+            continue
         name = func.name.upper() if isinstance(func, exp.Anonymous) else func.sql_name().upper()
         if name not in FUNCTIONS:
             raise QueryValidationError(f'Function {name} is not supported.')

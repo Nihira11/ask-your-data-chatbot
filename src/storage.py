@@ -31,7 +31,22 @@ class Store:
                     dataset_id TEXT NOT NULL REFERENCES datasets(id),
                     role TEXT NOT NULL, payload TEXT NOT NULL,
                     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+                CREATE TABLE IF NOT EXISTS ai_preferences (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    enabled INTEGER NOT NULL,
+                    model TEXT NOT NULL);
             ''')
+
+    def ai_preferences(self) -> dict:
+        with self.connect() as db:
+            row = db.execute('SELECT enabled, model FROM ai_preferences WHERE id=1').fetchone()
+        return {'enabled': bool(row['enabled']), 'model': row['model']} if row else {'enabled': False, 'model': ''}
+
+    def save_ai_preferences(self, *, enabled: bool, model: str) -> None:
+        """Remember only mode/model; credentials never enter local preferences."""
+        with self.connect() as db:
+            db.execute('INSERT OR REPLACE INTO ai_preferences VALUES (1, ?, ?)',
+                       (bool(enabled), model))
 
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:
@@ -71,12 +86,14 @@ class Store:
                        (chat_id, title, dataset_id))
         return chat_id
 
-    def save_definitions(self, chat_id: str, definitions: str) -> int:
+    def save_definitions(self, chat_id: str, definitions: str, *,
+                         append: bool = False, expected_revision: int | None = None) -> int:
         """Save user-confirmed meanings for this CSV, preserving historical evidence."""
         definitions = definitions.strip()
         if len(definitions) > 8000:
             raise ValueError('Keep your definitions under 8,000 characters.')
         with self.connect() as db:
+            db.execute('BEGIN IMMEDIATE')
             row = db.execute('SELECT d.* FROM datasets d JOIN chats c ON c.dataset_id=d.id WHERE c.id=?', (chat_id,)).fetchone()
             if row is None:
                 raise ValueError('Chat not found.')
@@ -84,6 +101,15 @@ class Store:
                 raise ValueError('The sample has reviewed definitions. Import a CSV to add your own.')
             metadata = json.loads(row['metadata'])
             revision = metadata.get('definitions_revision', 0)
+            if expected_revision is not None and revision != expected_revision:
+                raise ValueError('Definitions changed since this clarification. Please confirm again.')
+            if append:
+                existing = metadata.get('confirmed_definitions', '')
+                if definitions in existing.splitlines():
+                    return revision
+                definitions = '\n'.join(filter(None, (existing, definitions)))
+                if len(definitions) > 8000:
+                    raise ValueError('Keep your definitions under 8,000 characters.')
             if metadata.get('confirmed_definitions', '') == definitions:
                 return revision
             revision += 1
@@ -92,8 +118,22 @@ class Store:
             # Every chat sharing the dataset needs a context boundary after a meaning changes.
             for chat in db.execute('SELECT id FROM chats WHERE dataset_id=?', (row['id'],)).fetchall():
                 db.execute('INSERT INTO messages (chat_id,dataset_id,role,payload) VALUES (?,?,?,?)',
-                           (chat['id'], row['id'], 'system', json.dumps({'answer': 'Data definitions updated. New answers will use the saved meanings.', 'definitions_revision': revision})))
+                           (chat['id'], row['id'], 'system', json.dumps({
+                               'answer': f'Definition saved: {definitions.splitlines()[-1]}' if append else 'Data definitions updated. New answers will use the saved meanings.',
+                               'definitions_revision': revision,
+                               # An accepted clarification continues this conversation.
+                               # Other chats must stop using their older definitions.
+                               'context_reset': not (append and chat['id'] == chat_id),
+                           })))
         return revision
+
+    def discard_empty_chat(self, chat_id: str) -> bool:
+        """Remove only an unused sample chat; keep messages and imported datasets."""
+        with self.connect() as db:
+            return bool(db.execute('''DELETE FROM chats WHERE id = ?
+                AND NOT EXISTS (SELECT 1 FROM messages WHERE chat_id = chats.id)
+                AND dataset_id IN (SELECT id FROM datasets WHERE kind = 'sample')''',
+                (chat_id,)).rowcount)
 
     def chats(self) -> list[dict]:
         with self.connect() as db:
@@ -126,7 +166,8 @@ class Store:
         result = [{**dict(r), 'payload': json.loads(r['payload'])} for r in rows]
         if current_only:
             # A replacement is a context boundary, even when restoring an older dataset.
-            boundary = max((i + 1 for i, r in enumerate(result) if r['role'] == 'system'), default=0)
+            boundary = max((i + 1 for i, r in enumerate(result)
+                            if r['role'] == 'system' and r['payload'].get('context_reset', True)), default=0)
             active = self.chat(chat_id)['dataset_id']
             result = [r for r in result[boundary:] if r['dataset_id'] == active]
         return result

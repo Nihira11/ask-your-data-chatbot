@@ -59,3 +59,22 @@ def test_duplicate_column_names_keep_values(store, simple_dataset):
     result = run_query(store.dataset_path(simple_dataset), 'SELECT item AS x, amount AS x FROM records LIMIT 1')
     assert result['columns'] == ['x', 'x']
     assert result['rows'] == [['pen', 10.0]]
+
+
+@pytest.mark.parametrize('sql,expected', [
+    ("SELECT SUM(amount) FROM records WHERE amount >= 0 AND amount <= 10", [[10.0]]),
+    ("SELECT SUM(amount) FROM records WHERE amount < 0 OR amount > 10", [[15.0]]),
+    ("SELECT SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END) FROM records", [[30.0]]),
+])
+def test_compound_filters_and_case_are_sql_syntax(store, simple_dataset, sql, expected):
+    assert run_query(store.dataset_path(simple_dataset), sql)['rows'] == expected
+
+
+@pytest.mark.parametrize('sql', [
+    "SELECT * FROM records WHERE amount > 0 AND load_extension('/tmp/no') IS NULL",
+    "SELECT * FROM records WHERE amount > 0 OR readfile('/tmp/no') IS NULL",
+    "SELECT CASE WHEN amount > 0 THEN readfile('/tmp/no') ELSE '' END FROM records",
+])
+def test_operators_do_not_hide_unsafe_functions(store, simple_dataset, sql):
+    with pytest.raises(ValueError):
+        run_query(store.dataset_path(simple_dataset), sql)
