@@ -4,9 +4,14 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+from datetime import datetime
 from typing import Literal
 
 from src.config import AIConfig, provider_error
+from src.clarifications import pending_definition, remember_confirmation
+from src.demo_intents import demo_question
+from src.csv_profile import csv_profile
+from src.formatting import format_gbp
 from src.prompts import SYSTEM_PROMPT
 from src.storage import Store
 from src.tools import DatasetTools
@@ -32,7 +37,9 @@ WHERE i.unit_price >= 0 GROUP BY p.product_id, p.name ORDER BY revenue_gbp DESC,
 
 
 def offline_answer(question: str, tools: DatasetTools, kind: str) -> dict:
-    normalized = question.lower().strip().rstrip('?.!')
+    normalized = demo_question(question, kind)
+    if kind == 'csv' and normalized in {'describe my data', 'show columns', 'show missing values'}:
+        return csv_profile(normalized, tools)
     if question.lower().startswith('/sql '):
         sql = question[5:]
     elif re.search(r'\b(delete|drop|update|insert|alter|remove)\b', normalized):
@@ -46,7 +53,11 @@ def offline_answer(question: str, tools: DatasetTools, kind: str) -> dict:
     elif kind == 'sample' and normalized in DEMO_SQL:
         sql = DEMO_SQL[normalized]
     else:
-        return {'status': 'unable', 'answer': 'Offline demo supports the example questions exactly, or /sql followed by a SELECT query. General questions and conversational follow-ups need AI mode. For a custom CSV, try “show data” or “how many rows”.'}
+        examples = ('Try “total revenue”, “revenue per month”, “top 5 products by revenue”, '
+                    '“sales by country”, or “number of orders”.' if kind == 'sample'
+                    else 'For your CSV, try “describe my data”, “show columns”, “show missing values”, “show data”, or “how many rows”.')
+        return {'status': 'unable', 'answer': 'Demo mode could not match this to a supported calculation. '
+                + examples + '\n\nDate filters, other metrics and conversational follow-ups need AI mode or /sql SELECT ….'}
     result = tools.run_checked_query(sql)
     if 'error' in result:
         return {'status': 'unable', 'answer': result['error']}
@@ -56,20 +67,31 @@ def offline_answer(question: str, tools: DatasetTools, kind: str) -> dict:
         value = result['rows'][0][0]
         answer = f'{result["columns"][0]}: {value:,.2f}' if isinstance(value, float) else f'{result["columns"][0]}: {value}'
         if normalized == 'what is the total revenue' and kind == 'sample':
-            answer = f'Net revenue is £{value:,.2f}, including cancellation credits.'
+            answer = f'Net revenue is {format_gbp(value)}, including cancellation credits.' if value is not None else ''
         elif normalized == 'how many orders are there' and kind == 'sample':
             answer = f'There are {value:,} invoices, including cancellations.'
         elif kind == 'csv' and normalized in {'how many rows', 'how many rows are there'}:
             answer = f'Your file contains {value:,} rows.'
         if value is None:
             answer = 'The aggregate is NULL; there may be no matching non-null values.'
+    elif normalized == 'show monthly revenue' and kind == 'sample':
+        answer = 'Net revenue by month, including cancellation credits:\n\n' + '\n'.join(
+            f'{datetime.strptime(month, "%Y-%m").strftime("%b %Y")} — {format_gbp(revenue)}'
+            for month, revenue in result['rows']
+        )
+        answer += '\n\nBoth December periods are partial; these selected invoices do not represent a retailer-wide trend.'
+    elif normalized == 'show revenue by country' and kind == 'sample':
+        answer = 'Net revenue by country, including cancellation credits:\n\n' + '\n'.join(
+            f'{country or "Unknown country"} — {format_gbp(revenue)}'
+            for country, revenue in result['rows']
+        )
     elif normalized == 'which five products generated the most revenue' and kind == 'sample':
         answer = 'The top five products by net revenue are:\n\n' + '\n'.join(
-            f'{index}. {name or product_id} — £{revenue:,.2f}'
+            f'{index}. {name or product_id} — {format_gbp(revenue)}'
             for index, (product_id, name, revenue) in enumerate(result['rows'], start=1)
         )
     else:
-        answer = f'Found {len(result["rows"])} rows. Open “View answer details” to see the results.'
+        answer = f'Found {len(result["rows"])} rows. Open “View results” beneath this answer to see the results.'
     if result['truncated']:
         answer += ' Output is limited to 100 rows; additional rows are not displayed.'
     if kind == 'sample':
@@ -111,9 +133,14 @@ async def ai_answer(question: str, tools: DatasetTools, history: list[dict], *, 
     except ImportError:
         return {'status': 'unable', 'answer': 'Install requirements-agent.txt to enable AI mode.'}
 
+    class ProposedDefinition(BaseModel):
+        column: str
+        meaning: str
+
     class AgentAnswer(BaseModel):
         status: Literal['answer', 'clarify', 'unable']
         answer: str
+        proposed_definition: ProposedDefinition | None = None
 
     @function_tool
     def get_schema() -> str:
@@ -130,9 +157,11 @@ async def ai_answer(question: str, tools: DatasetTools, history: list[dict], *, 
         """Validate and run one read-only SQLite query on the active dataset."""
         return json.dumps(tools.run_checked_query(sql))
 
+    tools.check_categories = True
     recent = recent_context(history)
     recent.append({'role': 'user', 'content': json.dumps({
         'question': question, 'active_schema': tools.get_schema(),
+        'category_values': tools.category_values(),
         'definitions': tools.search_context(question),
         'context_note': 'Earlier answers are history only. Query the current dataset for new numbers.'
     })})
@@ -162,16 +191,27 @@ async def ask(store: Store, chat_id: str, question: str, *, use_ai: bool = False
     if not question or len(question) > 4000:
         raise ValueError('Enter a question of 1–4,000 characters.')
     dataset_id = store.chat(chat_id)['dataset_id']
-    tools = DatasetTools(store, dataset_id)
     history = store.messages(chat_id, current_only=True)
+    kind = store.dataset(dataset_id)['kind']
+    # Basic CSV inspection has a known, checked calculation. Run it locally in
+    # either mode instead of depending on a model to invent an overview query.
+    local_profile = kind == 'csv' and demo_question(question, kind) in {
+        'describe my data', 'show columns', 'show missing values',
+    }
+    remote = use_ai and not question.lower().startswith('/sql ') and not local_profile
     store.append(chat_id, dataset_id, 'user', {'answer': question})
+    memory_notice = remember_confirmation(store, chat_id, dataset_id, question, history) if remote else None
+    # Capture the updated definitions before the model answers this confirmation.
+    tools = DatasetTools(store, dataset_id)
     # Explicit SQL is always local, including when the user selected AI mode.
-    remote = use_ai and not question.lower().startswith('/sql ')
     if remote:
         response = await ai_answer(question, tools, history, config=config)
+        pending_definition(response, tools)
     else:
-        response = offline_answer(question, tools, store.dataset(dataset_id)['kind'])
+        response = offline_answer(question, tools, kind)
     response.update(dataset_id=dataset_id, mode='ai' if remote else 'offline', queries=tools.results,
-                    sources=tools.search_context(question))
+                    sources=tools.search_context(question), query_errors=tools.errors)
+    if memory_notice:
+        response['answer'] += '\n\n' + memory_notice
     store.append(chat_id, dataset_id, 'assistant', response)
     return response

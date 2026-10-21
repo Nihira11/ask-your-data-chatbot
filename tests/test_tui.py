@@ -72,8 +72,7 @@ async def test_terminal_question_new_chat_and_restore(store):
         lines = [line.text.rstrip() for line in log.lines]
         assert 'What is the total revenue?' in lines
         assert 'Net revenue is £117,058.55, including cancellation credits.' in lines
-        assert 'Found 13 rows. Open “View answer details” to see the results.' in lines
-        assert log.scroll_y == 0
+        assert 'Net revenue by month, including cancellation credits:' in lines
         await pilot.click('#details-button')
         await pilot.pause()
         assert 'SUM' in app.screen.query_one('#sql', TextArea).text

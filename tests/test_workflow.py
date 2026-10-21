@@ -24,6 +24,19 @@ async def test_refusal_clarification_and_empty(store, simple_dataset):
     assert answer['answer'] == 'No matching rows were found.'
 
 
+async def test_failed_query_diagnostics_survive_reopening(store, simple_dataset, monkeypatch):
+    from src.storage import Store
+    async def fake_ai(question, tools, history, **kwargs):
+        tools.run_checked_query('SELECT COUNT(*) FROM wrong_table')
+        return {'status': 'unable', 'answer': 'The table name was incorrect.'}
+    monkeypatch.setattr('src.workflow.ai_answer', fake_ai)
+    chat = store.new_chat(simple_dataset)
+    result = await ask(store, chat, 'Give me an overview of these transactions', use_ai=True)
+    assert not result['queries']
+    assert result['query_errors'] == ["Table 'wrong_table' is not in the active dataset."]
+    assert Store(store.home).messages(chat)[-1]['payload']['query_errors'] == result['query_errors']
+
+
 def test_three_attempt_budget(store, simple_dataset):
     tools = DatasetTools(store, simple_dataset)
     for _ in range(3):
