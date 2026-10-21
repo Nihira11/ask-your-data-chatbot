@@ -9,12 +9,16 @@ from rich.text import Text
 from textual import on, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.theme import Theme
-from textual.widgets import Button, Input, Label, ListItem, ListView, RichLog, Select, Static, TabbedContent, TabPane, TextArea
+from textual.widgets import Button, Input, Label, ListItem, ListView, RichLog, Static, TabbedContent, TabPane, TextArea
 
 from src.config import AIConfig
+from src.answer_rendering import AnswerText
+from src.export import export_chat_results
+from src.file_picker import choose_csv_file, choose_export_folder
+from src.formatting import format_gbp
 from src.connection import check_connection
 from src.retrieval import search_context
 from src.database import get_schema
@@ -34,13 +38,26 @@ def safe(value) -> str:
     return ''.join(c if c.isprintable() or c == '\n' else ' ' for c in str(value))[:10000]
 
 
-def result_table(query):
+def result_table(query, *, sample=False):
     table = Table(box=box.SIMPLE, show_header=True, header_style=f'bold {INK}',
                   border_style='#d6d4ce', padding=(0, 1), expand=False)
+    if query.get('display') == 'empty_cells_by_column':
+        table.add_column('Column', max_width=36, overflow='fold')
+        table.add_column('Empty cells', justify='right')
+        for column, count in zip(query['columns'][1:], query['rows'][0][1:]):
+            table.add_row(Text(safe(column.removeprefix('empty_cells__'))), Text(str(count)))
+        return table
     for column in query['columns']:
-        table.add_column(Text(safe(column)), overflow='fold', max_width=36)
+        table.add_column(Text(safe(column)), overflow='fold', max_width=36,
+                         justify='right' if sample and column == 'revenue_gbp' else 'left')
     for row in query['rows']:
-        table.add_row(*(Text('—' if value is None else safe(value)) for value in row))
+        cells = []
+        for column, value in zip(query['columns'], row):
+            if sample and column == 'revenue_gbp' and isinstance(value, (int, float)):
+                cells.append(Text(format_gbp(value)))
+            else:
+                cells.append(Text('—' if value is None else safe(value)))
+        table.add_row(*cells)
     return table
 
 
@@ -75,24 +92,39 @@ class ImportScreen(Dialog):
         with Vertical(classes='dialog'):
             yield Label('Use your own data', classes='dialog-title')
             yield Static('Choose a CSV file. A copy will be saved on this device.\nUp to 5 MB · UTF-8 format', classes='dialog-note')
-            yield Input(placeholder='Paste the file path here', id='csv-path')
+            yield Button('Choose CSV file…', id='choose-csv', classes='solid')
+            yield Static('No file selected', id='csv-name', classes='dialog-note', markup=False)
             yield RichLog(id='import-preview', wrap=True, min_width=20)
             with Horizontal(classes='dialog-actions'):
                 yield Button('Cancel', id='cancel')
-                yield Button('Preview', id='preview')
                 yield Button('Use this file', id='confirm', classes='solid', disabled=True)
 
-    @on(Input.Changed, '#csv-path')
-    def changed(self):
+    @on(Button.Pressed, '#choose-csv')
+    @work(exclusive=True)
+    async def browse(self):
+        button = self.query_one('#choose-csv', Button)
+        confirm = self.query_one('#confirm', Button)
+        button.disabled = True
+        confirm.disabled = True
+        try:
+            path = await choose_csv_file()
+            self.file_chosen(path)
+        except RuntimeError as exc:
+            self.notify(str(exc), severity='error')
+        finally:
+            button.disabled = False
+            confirm.disabled = self.inspected is None
+
+    def file_chosen(self, path):
+        if path is None:
+            return
         self.inspected = None
         self.query_one('#confirm', Button).disabled = True
-
-    @on(Button.Pressed, '#preview')
-    def preview(self):
+        self.query_one('#csv-name', Static).update(safe(path.name))
         log = self.query_one('#import-preview', RichLog)
         log.clear()
         try:
-            self.inspected = inspect_csv(Path(self.query_one('#csv-path', Input).value))
+            self.inspected = inspect_csv(path)
             data = self.inspected
             log.write(Text(f'{safe(data["name"])} · {len(data["rows"]):,} rows', style='bold'))
             for name, dtype in zip(data['headers'], data['types']):
@@ -113,22 +145,32 @@ class ImportScreen(Dialog):
 
 
 class ChatsScreen(Dialog):
-    def __init__(self, store: Store, active: str):
+    def __init__(self, store: Store, active: str, drafts=None):
         super().__init__()
         self.store = store
         self.active = active
+        self.drafts = drafts or {}
 
     def compose(self) -> ComposeResult:
         with Vertical(classes='dialog'):
             yield Label('Your chats', classes='dialog-title')
             yield Static('Choose a conversation to pick up where you left off.', classes='dialog-note')
+            entries = []
+            for chat in self.store.chats():
+                messages = self.store.messages(chat['id'])
+                dataset = self.store.dataset(chat['dataset_id'])
+                draft = self.drafts.get(chat['id'], '')
+                if not messages and not draft.strip() and dataset['kind'] == 'sample':
+                    continue
+                question = next((m['payload']['answer'] for m in messages if m['role'] == 'user'),
+                                f'Draft: {draft}' if draft.strip() else 'New conversation')
+                entries.append((chat['id'], question, dataset['name']))
+            if not entries:
+                yield Static('No saved chats yet. Send a question to start one.', classes='dialog-note')
             with ListView(id='chats'):
-                for chat in self.store.chats():
-                    messages = self.store.messages(chat['id'])
-                    question = next((m['payload']['answer'] for m in messages if m['role'] == 'user'), 'New conversation')
-                    name = self.store.dataset(chat['dataset_id'])['name']
+                for chat_id, question, name in entries:
                     label = safe(question).replace('\n', ' ')[:60]
-                    yield ListItem(Label(f'{label}\n{safe(name)}', markup=False), id='chat-' + chat['id'])
+                    yield ListItem(Label(f'{label}\n{safe(name)}', markup=False), id='chat-' + chat_id)
             with Horizontal(classes='dialog-actions'):
                 yield Button('Close', id='close-chats')
 
@@ -142,35 +184,86 @@ class ChatsScreen(Dialog):
         self.dismiss(None)
 
 
+class ExportConfirmScreen(Dialog):
+    """Choose a destination first, then explicitly save or cancel."""
+
+    def __init__(self, destination: Path, count: int):
+        super().__init__()
+        self.destination = destination
+        self.count = count
+
+    def compose(self) -> ComposeResult:
+        with Vertical(classes='dialog'):
+            yield Label('Save chat results?', classes='dialog-title')
+            yield Static(f'{self.count} result CSV files, plus an index and query details.\n'
+                         'A new folder will be created here:', classes='dialog-note')
+            yield Static(safe(self.destination), markup=False)
+            yield Static('Nothing is saved until you select Save results.', classes='dialog-note')
+            with Horizontal(classes='dialog-actions'):
+                yield Button('Cancel', id='cancel-export')
+                yield Button('Save results', id='confirm-export', classes='solid')
+
+    @on(Button.Pressed, '#cancel-export')
+    def cancel(self):
+        self.dismiss(False)
+
+    @on(Button.Pressed, '#confirm-export')
+    def save(self):
+        self.dismiss(True)
+
+
+class ExportScreen(Dialog):
+    def __init__(self, folder: Path, count: int, truncated: bool):
+        super().__init__()
+        self.folder, self.count, self.truncated = folder, count, truncated
+
+    def compose(self) -> ComposeResult:
+        with Vertical(classes='dialog', id='export-dialog'):
+            yield Label('Results saved', classes='dialog-title')
+            note = f'Saved {self.count} result CSV file' + ('' if self.count == 1 else 's') + ', index.csv and query details.'
+            if self.truncated:
+                note += '\nSome results were limited. Only their saved rows were exported.'
+            yield Static(note, classes='dialog-note')
+            yield Static('Folder path (select and copy):', classes='dialog-note')
+            yield TextArea(str(self.folder), read_only=True, id='export-path')
+            with Horizontal(classes='dialog-actions'):
+                yield Button('Back to chat', id='close-export', classes='solid')
+
+    @on(Button.Pressed, '#close-export')
+    def close_clicked(self):
+        self.dismiss(None)
+
+
 class DetailsScreen(Dialog):
     """Evidence remains accessible without occupying the chat screen."""
     CSS = '''
     #details-dialog { width: 104; height: 35; }
-    #answer-choice { margin-bottom: 1; }
+    #answer-question { height: auto; max-height: 4; margin-bottom: 1; }
     #evidence { height: 1fr; }
     #evidence TabPane { padding: 1 0; }
     #sql { background: #fafaf8; color: #302f2c; border: none; }
+    #export-dialog { height: 21; }
+    #export-path { height: 1fr; background: #fafaf8; color: #302f2c; border: round #cfccc3; }
     '''
 
-    def __init__(self, store: Store, chat_id: str):
+    def __init__(self, store: Store, chat_id: str, answer_id: int):
         super().__init__()
         self.store = store
         self.chat_id = chat_id
         history = store.messages(chat_id)
-        self.answers = [m for m in history if m['role'] == 'assistant']
-        self.labels = {}
-        question = 'Answer'
+        self.selected_answer = next(m for m in history if m['id'] == answer_id
+                                    and m['role'] == 'assistant' and m['payload'].get('queries'))
+        self.question = 'Answer'
         for message in history:
+            if message['id'] == answer_id:
+                break
             if message['role'] == 'user':
-                question = message['payload']['answer']
-            elif message['role'] == 'assistant':
-                self.labels[message['id']] = safe(question).replace('\n', ' ')[:80]
+                self.question = message['payload']['answer']
 
     def compose(self) -> ComposeResult:
         with Vertical(classes='dialog', id='details-dialog'):
             yield Label('Answer details', classes='dialog-title')
-            yield Select([(Text(self.labels[m['id']]), m['id']) for m in reversed(self.answers)],
-                         prompt='Choose an answer', id='answer-choice')
+            yield Static(safe(self.question), id='answer-question', markup=False)
             yield Static('', id='evidence-dataset', classes='dialog-note', markup=False)
             with TabbedContent(id='evidence'):
                 with TabPane('Results', id='results-tab'):
@@ -185,31 +278,25 @@ class DetailsScreen(Dialog):
                 yield Button('Back to chat', id='close-details', classes='solid')
 
     def on_mount(self):
-        self.query_one('#answer-choice', Select).display = len(self.answers) > 1
-        if self.answers:
-            # Prefer the active dataset; older answers remain explicitly selectable.
-            current = self.store.messages(self.chat_id, current_only=True)
-            latest = next((m for m in reversed(current) if m['role'] == 'assistant'), self.answers[-1])
-            self.query_one('#answer-choice', Select).value = latest['id']
-            self.show_answer(latest)
-
-    @on(Select.Changed, '#answer-choice')
-    def selected(self, event):
-        for message in self.answers:
-            if message['id'] == event.value:
-                self.show_answer(message)
-                break
+        self.show_answer(self.selected_answer)
 
     def show_answer(self, message):
+        self.selected_answer = message
         dataset_id = message['dataset_id']
-        name = self.store.dataset(dataset_id)['name']
+        dataset = self.store.dataset(dataset_id)
+        name = dataset['name']
         self.query_one('#evidence-dataset', Static).update(f'Data used: {safe(name)}')
         payload = message['payload']
         results = self.query_one('#results', RichLog)
         results.clear()
         queries = payload.get('queries', [])
         for query in queries:
-            results.write(result_table(query))
+            if query.get('display') == 'empty_cells_by_column':
+                results.write(Text(f'{query["rows"][0][0]:,} dataset rows checked · empty cells by column', style=f'bold {INK}'))
+                results.write(Text('0 means no empty cells. These are not sums of the column values.', style=MUTED))
+            results.write(result_table(query, sample=dataset['kind'] == 'sample'))
+            if query.get('display') == 'empty_cells_by_column':
+                continue
             note = f'{len(query["rows"])} row' + ('' if len(query['rows']) == 1 else 's')
             if query['truncated']:
                 note += ' shown · additional rows not displayed'
@@ -302,7 +389,7 @@ class AISetupScreen(Dialog):
             yield Static('Uses your OpenAI API account and API credits.\nKeys entered here stay in memory for this session.', classes='dialog-note')
             yield Input(password=True, placeholder='API key (leave blank to keep configured key)' if self.config.api_key else 'API key (hidden)', id='api-key')
             yield Input(value=self.config.model, placeholder='API model ID, e.g. gpt-6-luna', id='api-model')
-            yield Static('Enter a key and model, then test. The test uses disposable data only.', id='connection-status', markup=False)
+            yield Static('Mode and model are remembered. Use AI when ready; Test connection is optional.\nTo keep your key after restarting, configure OPENAI_API_KEY in your local .env.', id='connection-status', markup=False)
             with Horizontal(classes='dialog-actions'):
                 yield Button('Close', id='ai-close')
                 yield Button('Use demo', id='use-demo')
@@ -311,15 +398,32 @@ class AISetupScreen(Dialog):
 
     @on(Input.Changed)
     def changed(self):
+        if self.checked is not None:
+            self.query_one('#connection-status', Static).update(
+                'Configuration changed. Use AI when ready, or run the optional connection test.')
         self.checked = None
-        self.query_one('#use-ai', Button).disabled = True
+        self.refresh_use_ai()
+
+    def on_mount(self):
+        self.refresh_use_ai()
+
+    def entered_config(self):
+        return AIConfig(self.query_one('#api-key', Input).value.strip() or self.config.api_key,
+                        self.query_one('#api-model', Input).value.strip())
+
+    def refresh_use_ai(self):
+        try:
+            self.entered_config().validate()
+            valid = True
+        except ValueError:
+            valid = False
+        self.query_one('#use-ai', Button).disabled = self.testing or not valid
 
     @on(Button.Pressed, '#test-connection')
     def test_clicked(self):
         if self.testing:
             return
-        config = AIConfig(self.query_one('#api-key', Input).value.strip() or self.config.api_key,
-                          self.query_one('#api-model', Input).value.strip())
+        config = self.entered_config()
         try:
             config.validate()
         except ValueError as exc:
@@ -346,6 +450,7 @@ class AISetupScreen(Dialog):
             self.testing = False
             for selector in ('#api-key', '#api-model', '#test-connection', '#use-demo'):
                 self.query_one(selector).disabled = False
+            self.refresh_use_ai()
 
     @on(Button.Pressed, '#use-demo')
     def use_demo(self):
@@ -353,10 +458,16 @@ class AISetupScreen(Dialog):
 
     @on(Button.Pressed, '#use-ai')
     def use_ai(self):
-        if self.checked is not None:
-            config = self.checked
-            self.query_one('#api-key', Input).value = ''
-            self.dismiss({'enabled': True, 'config': config})
+        if self.testing:
+            return
+        config = self.entered_config()
+        try:
+            config.validate()
+        except ValueError as exc:
+            self.query_one('#connection-status', Static).update(str(exc))
+            return
+        self.query_one('#api-key', Input).value = ''
+        self.dismiss({'enabled': True, 'config': config})
 
     @on(Button.Pressed, '#ai-close')
     def close_clicked(self):
@@ -403,6 +514,7 @@ class DataChatApp(App):
     #topbar Button:hover, #topbar Button:focus { background: #eeede8; color: #302f2c; }
     #dataset { height: 2; color: #73716c; }
     #chat-area { height: 1fr; }
+    #choose-csv { margin-bottom: 1; }
     #welcome { height: 1fr; align: center middle; }
     #welcome-title { height: 1; text-align: center; text-style: bold; margin-bottom: 1; }
     #welcome-note { height: 2; text-align: center; color: #73716c; }
@@ -410,10 +522,16 @@ class DataChatApp(App):
     #suggestions Button { width: 100%; content-align: center middle; padding: 0 2; background: #fafaf8; color: #55534c; }
     #suggestions Button:hover, #suggestions Button:focus { background: #eeede8; color: #302f2c; }
     #conversation { height: 1fr; background: #fafaf8; color: #302f2c; padding: 1 0; }
-    #details-row { height: 3; }
-    #details-button { background: #fafaf8; color: #73716c; padding: 0; }
-    #details-button:hover, #details-button:focus { color: #302f2c; background: #eeede8; }
+    .chat-message { height: auto; width: 1fr; margin-bottom: 1; }
+    .chat-message Static { height: auto; width: 1fr; }
+    .answer-results { height: 1; min-width: 0; width: auto; padding: 0; margin-top: 1;
+        background: #fafaf8; color: #73716c; }
+    .answer-results:hover, .answer-results:focus { color: #302f2c; background: #eeede8; }
+    #export-chat { height: 1; min-width: 0; width: auto; padding: 0; margin-top: 1;
+        background: #fafaf8; color: #73716c; }
+    #export-chat:hover, #export-chat:focus { color: #302f2c; background: #eeede8; }
     #composer { height: 3; margin-top: 1; }
+    #mode-label { height: 1; color: #302f2c; text-style: bold; }
     #question { width: 1fr; }
     #send { min-width: 10; width: 10; padding: 0 1; margin-left: 1; }
     #bottomline { height: 1; margin-top: 1; }
@@ -427,7 +545,7 @@ class DataChatApp(App):
     .compact #suggestions Button { height: 2; }
     ''' + Dialog.CSS + DetailsScreen.CSS
 
-    def __init__(self, store: Store | None = None, *, use_ai=False):
+    def __init__(self, store: Store | None = None, *, use_ai=None):
         super().__init__()
         self.register_theme(Theme(name='paper', primary='#65625b', secondary='#73716c',
                                   accent='#65625b', foreground=INK, background=PAPER,
@@ -438,9 +556,24 @@ class DataChatApp(App):
         self.sample_id = ensure_sample(self.store)
         chats = self.store.chats()
         self.chat_id = chats[0]['id'] if chats else self.store.new_chat(self.sample_id)
-        self.use_ai = use_ai
-        self.ai_config = AIConfig.from_env()
+        preferences = self.store.ai_preferences()
+        configured = AIConfig.from_env()
+        self.ai_config = AIConfig(configured.api_key, preferences['model'] or configured.model)
+        self.use_ai = preferences['enabled'] if use_ai is None else use_ai
+        self.startup_notice = ''
+        if use_ai is None and self.use_ai:
+            try:
+                self.ai_config.validate()
+            except ValueError:
+                self.use_ai = False
+                self.startup_notice = 'AI setup needed: configure your key/model in Settings → AI connection.'
         self.busy = False
+        self.closing = False
+        self.exporting = False
+        self.pending_history = None
+        self.pending_label = ''
+        self.response_error = None
+        self.drafts = {}
 
     def compose(self) -> ComposeResult:
         with Vertical(id='page'):
@@ -459,68 +592,101 @@ class DataChatApp(App):
                         yield Button('What is the total revenue?', id='example-total')
                         yield Button('Which products earned the most?', id='example-products')
                         yield Button('Show monthly revenue', id='example-monthly')
-                yield RichLog(id='conversation', wrap=True, markup=False, min_width=20, auto_scroll=True)
-            with Horizontal(id='details-row'):
-                yield Button('View answer details', id='details-button')
+                yield VerticalScroll(id='conversation')
+            yield Button('Export chat results', id='export-chat')
+            yield Static('', id='mode-label', markup=False)
             with Horizontal(id='composer'):
                 yield Input(placeholder='Ask a question…', id='question', max_length=4000)
                 yield Button('Ask', id='send', classes='solid')
             with Horizontal(id='bottomline'):
                 yield Static('', id='status', markup=False)
-                yield Static('Enter to send · Ctrl+Q to quit', id='hint')
+                yield Static('/help · Enter to send · Ctrl+Q to quit', id='hint')
 
     def on_mount(self):
         self.restore_chat()
+        if self.startup_notice:
+            self.query_one('#status', Static).update(self.startup_notice)
         self.query_one('#question', Input).focus()
 
     def on_resize(self, event):
         self.screen.set_class(event.size.height < 32, 'compact')
 
-    def restore_chat(self):
+    def restore_chat(self, *, scroll_to_end=False):
+        if self.closing:
+            return
         dataset_id = self.store.chat(self.chat_id)['dataset_id']
         dataset = self.store.dataset(dataset_id)
         name = 'Online retail sample · GBP' if dataset['kind'] == 'sample' else safe(dataset['name'])
-        mode = 'AI mode' if self.use_ai else 'Demo · example questions only'
-        self.query_one('#dataset', Static).update(f'{name}   /   {mode}')
-        log = self.query_one('#conversation', RichLog)
-        log.clear()
-        history = self.store.messages(self.chat_id)
+        self.query_one('#dataset', Static).update(name)
+        mode = 'AI mode · uses paid API credits' if self.use_ai else 'Demo mode · no API charges'
+        self.query_one('#mode-label', Static).update(mode)
+        log = self.query_one('#conversation', VerticalScroll)
+        history = self.pending_history if self.pending_history is not None else self.store.messages(self.chat_id)
+        export_button = self.query_one('#export-chat', Button)
+        export_button.display = any(m['role'] == 'assistant' and m['payload'].get('queries') for m in history)
+        export_button.disabled = self.busy or self.exporting
         self.query_one('#welcome').display = not history
         log.display = bool(history)
-        self.query_one('#details-row').display = any(m['role'] == 'assistant' for m in history)
-        # A previously hidden RichLog has no usable width until layout runs.
-        # It retains wrapped lines, so writing now would lock in a narrow column.
-        self.call_after_refresh(self.render_history)
+        self.call_after_refresh(self.render_history, scroll_to_end)
         is_sample = dataset['kind'] == 'sample'
-        self.query_one('#example-total', Button).label = 'What is the total revenue?' if is_sample else 'Show a few rows'
-        self.query_one('#example-products', Button).label = 'Which products earned the most?' if is_sample else 'How many rows are there?'
-        self.query_one('#example-monthly').display = is_sample
-        self.query_one('#status', Static).update('Saved on this device')
+        self.query_one('#example-total', Button).label = 'What is the total revenue?' if is_sample else 'Describe my data'
+        self.query_one('#example-products', Button).label = 'Which products earned the most?' if is_sample else 'Show columns'
+        self.query_one('#example-monthly', Button).label = 'Show monthly revenue' if is_sample else 'Show missing values'
+        self.query_one('#status', Static).update('You can draft your next question.' if self.busy else 'Saved on this device')
+        self.query_one('#hint', Static).update('Wait for reply to send · Ctrl+Q to quit' if self.busy else '/help · Enter to send · Ctrl+Q to quit')
 
-    def render_history(self):
-        log = self.query_one('#conversation', RichLog)
-        log.clear()
+    async def render_history(self, scroll_to_end=False):
+        if self.closing:
+            return
+        log = self.query_one('#conversation', VerticalScroll)
         dataset_id = self.store.chat(self.chat_id)['dataset_id']
-        for message in self.store.messages(self.chat_id):
-            self.render_message(message, dataset_id)
+        history = self.pending_history if self.pending_history is not None else self.store.messages(self.chat_id)
+        widgets = [self.message_widget(message, dataset_id) for message in history]
+        if self.busy:
+            widgets.append(Vertical(Static(Text('Ask your data', style=f'bold {INK}')),
+                                    Static(Text(self.pending_label, style=MUTED)), classes='chat-message'))
+        elif self.response_error and self.response_error[0] == self.chat_id:
+            widgets.append(Vertical(Static(Text('Ask your data', style=f'bold {INK}')),
+                                    Static(self.response_error[1], markup=False), classes='chat-message'))
+        await log.remove_children()
+        if widgets:
+            await log.mount_all(widgets)
+        if scroll_to_end:
+            log.scroll_end(animate=False)
+        else:
+            log.scroll_home(animate=False)
 
-    def render_message(self, message, active_dataset):
-        log = self.query_one('#conversation', RichLog)
+    def message_widget(self, message, active_dataset):
         role = {'user': 'You', 'assistant': 'Ask your data', 'system': 'Data updated'}.get(message['role'], 'Note')
+        if message['role'] == 'system' and 'definitions_revision' in message['payload']:
+            role = 'Definitions'
         if message['dataset_id'] != active_dataset:
             role += ' · ' + safe(self.store.dataset(message['dataset_id'])['name'])
-        log.write(Text(role, style=f'bold {INK}'))
-        log.write(Text(safe(message['payload'].get('answer', ''))))
-        log.write(Text(''))
+        body = AnswerText if message['role'] == 'assistant' else Static
+        widgets = [Static(Text(role, style=f'bold {INK}')),
+                   body(safe(message['payload'].get('answer', '')), markup=False)]
+        if message['role'] == 'assistant' and message['payload'].get('queries'):
+            widgets.append(Button('View results', id=f'results-{message["id"]}', classes='answer-results'))
+        return Vertical(*widgets, classes='chat-message')
 
     def show_help(self):
         self.query_one('#welcome').display = False
-        log = self.query_one('#conversation', RichLog)
-        log.display = True
-        log.write(Text('Questions to try', style='bold'))
-        for question in EXAMPLES:
-            log.write(Text('  ' + question))
-        log.write(Text('\nFor a CSV: “show data” or “how many rows”.\nCommands: /new · /load · /sample · /sql SELECT …', style=MUTED))
+        self.query_one('#conversation').display = True
+        self.call_after_refresh(self.render_help)
+
+    async def render_help(self):
+        if self.closing:
+            return
+        log = self.query_one('#conversation', VerticalScroll)
+        is_sample = self.store.chat(self.chat_id)['dataset_id'] == self.sample_id
+        questions = EXAMPLES if is_sample else ['Describe my data', 'Show columns', 'Show missing values', 'Show data', 'How many rows are there?']
+        text = Text('Questions to try\n', style='bold')
+        text.append('\n'.join('  ' + question for question in questions), style=INK)
+        if is_sample:
+            text.append('\n\nCommon wording works too: “total sales”, “revenue per month”,\n“top 5 products by revenue”, “sales by country”, “number of orders”.', style=MUTED)
+        text.append('\n\nCommands: /new · /load · /sample · /sql SELECT …', style=MUTED)
+        await log.mount(Vertical(Static(text), classes='chat-message'))
+        log.scroll_end(animate=False)
 
     @on(Button.Pressed, '#settings')
     def settings_clicked(self):
@@ -537,8 +703,9 @@ class DataChatApp(App):
         if result:
             self.use_ai = result['enabled']
             self.ai_config = result['config']
+            self.store.save_ai_preferences(enabled=self.use_ai, model=self.ai_config.model)
             self.restore_chat()
-            self.query_one('#status', Static).update('AI connected for this session' if self.use_ai else 'Demo mode · no API calls')
+            self.query_one('#status', Static).update('AI mode selected · mode and model saved' if self.use_ai else 'Demo mode saved · no API calls')
         self.query_one('#question', Input).focus()
 
     def finish_definitions(self, revision):
@@ -547,10 +714,46 @@ class DataChatApp(App):
             self.query_one('#status', Static).update('Data definitions saved')
         self.query_one('#question', Input).focus()
 
-    @on(Button.Pressed, '#details-button')
-    def details_clicked(self):
+    @on(Button.Pressed, '.answer-results')
+    def details_clicked(self, event):
         if not self.busy:
-            self.push_screen(DetailsScreen(self.store, self.chat_id))
+            answer_id = int(event.button.id.removeprefix('results-'))
+            self.push_screen(DetailsScreen(self.store, self.chat_id, answer_id))
+
+    @on(Button.Pressed, '#export-chat')
+    @work
+    async def save_chat_results(self):
+        if self.busy or self.exporting:
+            return
+        self.exporting = True
+        button = self.query_one('#export-chat', Button)
+        button.disabled = True
+        # Snapshot before opening Finder: later turns cannot change this export.
+        chat_id = self.chat_id
+        history = self.store.messages(chat_id)
+        queries = [query for m in history if m['role'] == 'assistant'
+                   for query in m['payload'].get('queries', [])]
+        try:
+            if not queries:
+                return
+            datasets = {m['dataset_id']: self.store.dataset(m['dataset_id'])['name']
+                        for m in history if m['role'] == 'assistant' and m['payload'].get('queries')}
+            destination = await choose_export_folder(self.store.home / 'exports')
+            if destination is None:
+                self.notify('Export cancelled. Nothing was saved.')
+                return
+            if not await self.push_screen_wait(ExportConfirmScreen(destination, len(queries))):
+                self.notify('Export cancelled. Nothing was saved.')
+                return
+            folder = export_chat_results(destination, chat_id, history, datasets)
+            self.push_screen(ExportScreen(folder, len(queries), any(q['truncated'] for q in queries)))
+        except (OSError, ValueError, RuntimeError):
+            self.notify('Could not save the results. Please try again and choose a writable folder.', severity='error')
+        finally:
+            self.exporting = False
+            button.disabled = self.busy
+            if not isinstance(self.screen, ExportScreen):
+                self.query_one('#question', Input).focus()
 
     @on(Button.Pressed, '#saved-chats')
     def saved_clicked(self):
@@ -558,11 +761,23 @@ class DataChatApp(App):
 
     def action_saved_chats(self):
         if not self.busy:
-            self.push_screen(ChatsScreen(self.store, self.chat_id), self.open_chat)
+            drafts = {**self.drafts, self.chat_id: self.query_one('#question', Input).value}
+            self.push_screen(ChatsScreen(self.store, self.chat_id, drafts), self.open_chat)
+
+    def leave_chat(self):
+        draft = self.query_one('#question', Input).value
+        if draft.strip():
+            self.drafts[self.chat_id] = draft
+        else:
+            self.drafts.pop(self.chat_id, None)
+            self.store.discard_empty_chat(self.chat_id)
 
     def open_chat(self, chat_id):
-        if chat_id:
+        if chat_id and chat_id != self.chat_id:
+            self.store.chat(chat_id)
+            self.leave_chat()
             self.chat_id = chat_id
+            self.query_one('#question', Input).value = self.drafts.get(chat_id, '')
             self.restore_chat()
         self.query_one('#question', Input).focus()
 
@@ -572,9 +787,18 @@ class DataChatApp(App):
 
     def action_new_chat(self):
         if not self.busy:
+            self.leave_chat()
             self.chat_id = self.store.new_chat(self.sample_id)
+            self.query_one('#question', Input).value = ''
             self.restore_chat()
             self.query_one('#question', Input).focus()
+
+    async def action_quit(self):
+        # Layout callbacks may still run after the unused chat has been deleted.
+        self.closing = True
+        if not self.busy:
+            self.leave_chat()
+        await super().action_quit()
 
     @on(Button.Pressed, '#load-csv')
     def import_clicked(self):
@@ -590,7 +814,7 @@ class DataChatApp(App):
                 dataset_id = import_csv(self.store, inspected)
                 self.store.activate(self.chat_id, dataset_id)
                 self.restore_chat()
-                self.query_one('#status', Static).update('File ready. Define columns in Settings.')
+                self.query_one('#status', Static).update('File ready. Try “describe my data”.')
             except (ValueError, OSError) as exc:
                 self.notify(str(exc), severity='error')
         self.query_one('#question', Input).focus()
@@ -600,9 +824,9 @@ class DataChatApp(App):
     @on(Button.Pressed, '#example-monthly')
     def example_clicked(self, event):
         is_sample = self.store.chat(self.chat_id)['dataset_id'] == self.sample_id
-        questions = {'example-total': EXAMPLES[0] if is_sample else 'show data',
-                     'example-products': EXAMPLES[2] if is_sample else 'how many rows',
-                     'example-monthly': EXAMPLES[1]}
+        questions = {'example-total': EXAMPLES[0] if is_sample else 'Describe my data',
+                     'example-products': EXAMPLES[2] if is_sample else 'Show columns',
+                     'example-monthly': EXAMPLES[1] if is_sample else 'Show missing values'}
         field = self.query_one('#question', Input)
         field.value = questions[event.button.id]
         field.focus()
@@ -622,6 +846,7 @@ class DataChatApp(App):
         if not question or self.busy:
             return
         field.value = ''
+        self.drafts.pop(self.chat_id, None)
         if question == '/help':
             self.show_help()
         elif question == '/new':
@@ -633,20 +858,29 @@ class DataChatApp(App):
             self.restore_chat()
         else:
             self.busy = True
-            field.disabled = True
+            self.response_error = None
+            dataset_id = self.store.chat(self.chat_id)['dataset_id']
+            # Show the submitted turn immediately; ask() remains the sole writer
+            # of saved messages. The snapshot prevents duplicate user messages.
+            self.pending_history = self.store.messages(self.chat_id) + [
+                {'role': 'user', 'dataset_id': dataset_id, 'payload': {'answer': question}}
+            ]
+            self.pending_label = 'Thinking…' if self.use_ai and not question.lower().startswith('/sql ') else 'Checking your data…'
             self.query_one('#send', Button).disabled = True
-            self.query_one('#status', Static).update('Looking at your data…')
+            self.restore_chat(scroll_to_end=True)
+            field.focus()
             self.answer_question(question)
 
     @work(exclusive=True)
     async def answer_question(self, question):
         try:
             await ask(self.store, self.chat_id, question, use_ai=self.use_ai, config=self.ai_config)
-            self.restore_chat()
         except Exception:
-            self.query_one('#status', Static).update('Something went wrong. Please try again.')
+            self.response_error = (self.chat_id, 'Could not finish this answer. Please try again. Your next draft is still in the question box.')
         finally:
             self.busy = False
+            self.pending_history = None
+            self.pending_label = ''
+            self.restore_chat(scroll_to_end=True)
             self.query_one('#send', Button).disabled = False
-            self.query_one('#question', Input).disabled = False
             self.query_one('#question', Input).focus()

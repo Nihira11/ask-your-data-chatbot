@@ -14,7 +14,11 @@ from src.workflow import ask
 def main():
     load_dotenv(ROOT / '.env')
     parser = argparse.ArgumentParser(description='Ask Your Data — local terminal chatbot')
-    parser.add_argument('--ai', action='store_true', help='Use configured OpenAI API (may incur API charges)')
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument('--ai', action='store_const', const=True, default=None, dest='ai',
+                      help='Use configured OpenAI API (may incur API charges)')
+    mode.add_argument('--demo', action='store_const', const=False, dest='ai',
+                      help='Start in demo mode, overriding the saved preference')
     parser.add_argument('--ask', help='Ask one question and print JSON evidence')
     parser.add_argument('--home', type=Path, help='Local storage folder (default: data/private)')
     parser.add_argument('--chat', help='Saved chat ID for --ask; otherwise create a new chat')
@@ -30,7 +34,10 @@ def main():
     if args.ask:
         sample = ensure_sample(store)
         chat = args.chat or store.new_chat(sample)
-        result = asyncio.run(ask(store, chat, args.ask, use_ai=args.ai))
+        from src.config import AIConfig
+        configured = AIConfig.from_env()
+        config = AIConfig(configured.api_key, store.ai_preferences()['model'] or configured.model)
+        result = asyncio.run(ask(store, chat, args.ask, use_ai=bool(args.ai), config=config))
         print(json.dumps({'chat_id': chat, **result}, indent=2))
     else:
         from src.tui import DataChatApp
