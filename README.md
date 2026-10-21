@@ -1,25 +1,81 @@
 # Ask Your Data
 
-A local **terminal chatbot** for exploring sales data with visible SQL and query results.
-Built with Python, Textual, SQLite, SQLGlot, and an optional OpenAI Agents SDK connection.
+**Ask questions about a CSV, follow up in plain English, and inspect the SQL behind each answer.**
 
-**Status: local app with AI setup and saved data definitions.** The offline demo, saved chats, CSV imports, checked
-SQL execution, and on-demand answer details work locally. The AI integration is implemented and
-mock-tested; an authenticated live model call has **not** been verified. Offline mode
-supports a small explicit set of questions; it is not a general-purpose AI chatbot.
+A local terminal app built with **Python, Textual, SQLite, SQLGlot and the OpenAI Agents SDK**.
+Try the bundled retail demo without an API key, or connect your own OpenAI API account
+for broader questions about your data. Chats, imported data and confirmed column meanings
+are stored on your computer.
 
-## Run it on this computer
+**Explore without installing:** [PDF walkthrough](docs/ask-your-data-walkthrough.pdf) ·
+[All 12 screenshots](screenshots/) · [Architecture](docs/architecture.md)
 
-A Python 3.12 virtual environment is already prepared in this checkout:
+![AI answer with a formatted product-line table, an explicit branch filter and a View results button](screenshots/04-ai-formatted-answer.png)
 
-```bash
-.venv/bin/python app.py
-```
+*An AI answer over an imported supermarket CSV. The values are shown as stored, with no assumed currency.*
 
-Or double-click `Start Chatbot.command` in Finder. No API key is needed for offline mode.
-The app adapts to a standard 80×24 terminal. A 120×40 window gives more room for results.
+## A quick visual tour
 
-For a fresh checkout, use Python 3.11 or newer (tested on Python 3.12):
+### 1. Bring your own CSV
+
+Select **Load CSV**, choose a file in the macOS file window, then review its row count,
+inferred column types and empty-cell counts before selecting **Use this file**.
+The source file stays unchanged; the app keeps an imported copy.
+
+![CSV preview showing tips.csv, 244 rows, seven columns, inferred types and no empty cells](screenshots/03-csv-import-preview.png)
+
+### 2. Inspect the evidence for each answer
+
+Every answer that ran a query has its own **View results** button. The detail view
+contains the saved result rows, executed SQL, definition sources and dataset columns.
+Follow-up answers have their own evidence; clarification-only replies have no results button.
+
+![Answer-specific results showing six product-line totals and the dataset used](screenshots/06-answer-results.png)
+
+[See the SQL tab](screenshots/07-answer-sql.png). A successful query still needs a sensible
+interpretation: the evidence is available so you can check it.
+
+### 3. Refine an analysis through follow-ups
+
+AI mode can carry earlier filters into a follow-up. This tested sequence narrows Dinner
+to Sunday dinner, then to non-smokers while retaining both earlier filters.
+
+![Three AI answers retaining Dinner, Sunday and non-smoker filters with separate result buttons](screenshots/08-follow-up-filters.png)
+
+### 4. Clarify a meaning once and reuse it
+
+When the assistant proposes a column meaning and you clearly confirm it, the app saves
+that definition with the dataset. It is reused across chats and restarts, and remains
+editable in **Settings → Data definitions**. Exact re-uploads reuse the saved dataset.
+
+![A size clarification, user confirmation, Definition saved notice and verified average-tip answer](screenshots/09-clarification-saved.png)
+
+The example confirms that `size` means the number of people in the party. The result is
+**size 6, average tip 5.225, across 4 rows**. Qualified replies such as “yes, but only for
+branch A” are not saved as general column definitions.
+
+### More of the experience
+
+| Feature | What it does | Screenshot |
+| --- | --- | --- |
+| Free demo | Bundled retail questions work without credentials | [Demo answers](screenshots/02-retail-demo-answers.png) |
+| Visible progress | Shows your question and “Thinking…” immediately; lets you draft the next question while sending is disabled | [Loading and drafting](screenshots/05-thinking-and-draft.png) |
+| Formatted answers | Renders Markdown tables, bold text and code while preserving the saved answer | [Formatted answer](screenshots/04-ai-formatted-answer.png) |
+| Local chat history | Reopen conversations labelled with their datasets | [Saved chats](screenshots/11-saved-chats.png) |
+| Export all results | Choose a destination, review the export, then save or cancel | [Export confirmation](screenshots/10-export-confirmation.png) |
+| Your own AI account | Enter your key and model; connection testing is optional | [AI setup](screenshots/12-connect-your-own-ai.png) |
+
+The screenshots are captures from the actual Textual renderer at 110×44 characters.
+AI examples replay answers from successful live evaluations, with their SQL results
+rechecked locally. The waiting state uses a controlled delay. The native Finder windows
+are not pictured. [Capture notes and captions](screenshots/manifest.json) describe each image.
+
+## Run locally
+
+Use **Python 3.11+**; the clean-install check used **Python 3.12** on macOS.
+Native CSV selection and export destination selection currently require macOS.
+
+From the repository root:
 
 ```bash
 python3.12 -m venv .venv
@@ -28,166 +84,228 @@ python -m pip install -r requirements.txt
 python app.py
 ```
 
-![Terminal preview](docs/terminal-preview.png)
+Already installed? Run `.venv/bin/python app.py`, or double-click
+`Start Chatbot.command` in Finder. A fresh installation starts in Demo mode.
+No API key is required. The interface supports 80×24 terminals; a larger window gives
+results more room. Keep the terminal focused when using VS Code. **Ctrl+Q** exits,
+including from dialogs; **Escape** closes dialogs.
 
-The main screen keeps the conversation and question box in focus. Saved chats, CSV
-imports and answer details open separately. Click an example to put it in the question
-box, then press Enter or Ask. Press Escape to close a dialog.
+### Questions to try
 
-## Try it
-
-Ask one of these supported offline questions:
-
-- What is the total revenue?
-- Show monthly revenue
-- Which five products generated the most revenue?
-- Show revenue by country
-- How many orders are there?
-
-The sample's net invoiced revenue is **£117,058.55**, computed from 6,224 lines across
-390 invoices. This is a deliberately selected sample, not full-retailer revenue.
-
-| Action | How |
+| Dataset / mode | Example question |
 | --- | --- |
-| Start another chat | New chat button, Ctrl+N, or `/new` |
-| Load your own CSV | Load CSV button, Ctrl+O, or `/load`; preview and confirm |
-| Reopen a chat | Open Saved chats and choose a conversation |
-| Inspect an older answer | View answer details, then choose the question |
-| See executed SQL / definitions | View answer details → SQL / Definitions |
-| Inspect columns used by an answer | View answer details → Columns |
-| Save CSV column meanings | Settings → Data definitions |
-| Connect a model | Settings → AI connection |
-| Restore bundled data | `/sample` |
-| Query a CSV offline | `show data` or `how many rows` |
-| Run read-only SQL directly | `/sql SELECT * FROM records LIMIT 10` |
-| Show examples | `/help` |
-| Exit | Ctrl+Q |
+| Bundled retail, Demo | What is the total revenue? |
+| Bundled retail, Demo | Show monthly revenue |
+| Bundled retail, Demo | Which five products generated the most revenue? |
+| Bundled retail, Demo | Show revenue by country |
+| Bundled retail, Demo | How many orders are there? |
+| Any imported CSV, either mode | Describe my data |
+| Any imported CSV, either mode | Show columns / Show missing values |
+| `tips.csv`, AI | Across the whole dataset, show total tip and row count for Dinner. |
+| `tips.csv`, AI follow-up | Now only Sunday, keeping Dinner. |
+| Supermarket CSV, AI | For branch A, show the sum of Total as stored for each product line. No currency symbol is needed. |
 
-Ctrl+Q also exits while a dialog is open. When using VS Code, keep the terminal
-focused; the included workspace setting passes its macOS Ctrl+Q shortcut through
-to the chatbot instead of opening VS Code's view picker.
+Demo mode recognizes a limited set of questions and common variations. General
+natural-language analysis and conversational follow-ups require AI mode. Unsupported
+demo questions receive an explanation rather than an invented answer. Basic CSV
+inspection works locally in either mode, without an API call.
 
-Answers and evidence are saved automatically. Each chat has one active dataset.
-Replacing it keeps earlier answers labelled with their original dataset; those answers
-are excluded from the new dataset's model context. Open View answer details and choose an older question to inspect
-its original result table and SQL. The full history remains on disk.
+## Optional AI mode: use your own key
 
-## Real public sales data
+**Cloning this repository does not give you the author's API key.** Each person supplies
+their own key and uses their own OpenAI API credits. Demo mode remains free of API calls.
 
-The bundled dataset is derived from [UCI Online Retail](https://archive.ics.uci.edu/dataset/352/online-retail),
-Daqing Chen (2015), [DOI 10.24432/C5BW33](https://doi.org/10.24432/C5BW33),
-licensed [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
-
-The sample retains the first 25 ordinary and 5 cancellation invoices per month, with all
-of their lines, in original workbook order. It spans December 2010–December 2011.
-It includes missing customer IDs, credits and varying invoice-line timestamps. The app
-uses related customers, products, orders and order_items tables. Net invoiced value is
-signed quantity × unit price in GBP, with negative prices excluded and credits retained.
-See [sample provenance](data/sample/README.md), [manifest](data/sample/manifest.json),
-[data dictionary](data/knowledge/data_dictionary.md), and [business rules](data/knowledge/business_rules.md).
-
-## Optional AI mode
-
-Open **Settings → AI connection**. Enter your API key in the hidden field and an exact
-API model ID, then click **Test connection**. This makes a live API request with a
-disposable two-row database (20 + 22), verifies the SQL tool returned 42, and enables
-**Use AI** only if that check passes. The test uses API credits and sends no personal
-CSV data. A successful test verifies connectivity/tool wiring, not general answer accuracy.
-
-Keys entered in the app stay in memory for this session; they are never written to chat
-history or a configuration file. After restarting, enter the key again or configure your
-local `.env` as described below. **Use demo** switches back without another model call.
-
-
-The selected integration is the [OpenAI Agents SDK](https://developers.openai.com/api/docs/guides/agents/sdk).
-It exposes dataset-scoped schema, definitions and checked-query tools to one agent.
-No LangGraph, PostgreSQL, Streamlit, cloud hosting, or vector database is required.
+Install the optional integration:
 
 ```bash
-.venv/bin/python -m pip install -r requirements-agent.txt
+python -m pip install -r requirements-agent.txt
 cp .env.example .env
 ```
 
-Edit `.env` locally with `OPENAI_API_KEY` and an exact `OPENAI_MODEL` available to your
-API account. [GPT-6 Luna is documented as `gpt-6-luna`](https://developers.openai.com/api/docs/models/gpt-6-luna);
-account access and a live tool round-trip still need verification. No model is silently
-selected or substituted. Launch explicitly:
+Edit the local `.env` with `OPENAI_API_KEY` and `OPENAI_MODEL`, using an API model ID
+available to your account. The development live evaluations used `gpt-6-luna`.
+The example file contains no credential, and `.env` is ignored by Git.
+
+Alternatively, open **Settings → AI connection** and enter the key and model there.
+Select **Use AI** when ready. **Test connection** is optional and makes a paid API call
+against disposable test data; it does not send your imported CSV. It checks tool wiring,
+not general answer accuracy.
+
+Mode and model are remembered locally. Keys entered in the dialog stay in memory for
+that session only. To restore AI mode after restarting without re-entering the key,
+configure it in `.env` or the environment. With valid configuration, startup does not
+require another connection test or make an API call. If the key is missing, the app
+starts in Demo with a setup notice. The saved model takes precedence over `OPENAI_MODEL`.
+
+AI mode sends questions, limited recent context, schema, definitions, bounded category
+values and query results to the configured OpenAI API. It can incur API charges and
+does not use Codex sign-in. Trace export is disabled. CSV import, definition storage,
+basic local inspection and explicit `/sql` commands do not call a model.
+
+## Data, persistence and export
+
+| Boundary | Current behaviour |
+| --- | --- |
+| CSV input | One active UTF-8, comma-separated file per chat; up to 5 MB, 50,000 rows, 100 columns and 10,000 characters per cell |
+| Validation | Rejects duplicate headers, malformed row widths and invalid encoding |
+| Types | Preserves leading-zero identifiers as text; blank/whitespace cells become NULL; dates remain text; literal `N/A` remains text |
+| Custom CSV table | `records`; quote column names containing spaces or special characters |
+| SQL | Validated read-only queries, restricted functions, execution timeout and bounded output; at most 100 returned rows |
+| Meanings | Currency and business definitions are not assumed; saved definitions are versioned per dataset |
+| Storage | `data/private/` contains chats, imported copies and SQLite databases; ignored by Git, with no automatic cloud backup |
+| Portability | `--home /path/to/folder` selects another storage location; definitions are local, not shared between installations |
+
+**Chat history.** Changing the active dataset preserves older answers with their original
+evidence and excludes them from the new dataset's model context. Unused new chats are
+removed when leaving them; submitted messages and imported datasets are retained.
+Unsent drafts survive chat switching within the current session. Your next draft is
+never sent automatically when an answer finishes.
+
+**Definitions.** A clear confirmation saves one displayed, structured column proposal.
+Unrelated replies and filters do not become definitions. Definitions can also be edited
+in Settings, up to 8,000 characters. Edits reset the recent model context for affected
+chats; old answers retain their original definition snapshots. Changed CSV contents
+create a different dataset. Importer type upgrades preserve the old dataset for earlier
+answers and copy confirmed meanings to the updated snapshot. Old clarification messages
+without proposal metadata are not learned retroactively.
+
+**Exports.** Select **Export chat results**, choose a destination, then **Save results**
+or **Cancel**. The chooser starts at `data/private/exports/` if it exists, otherwise an
+existing parent. Cancel or Escape saves nothing and preserves the draft. A new
+`chat-results-…` folder contains:
+
+- One CSV for every saved query result, including follow-ups and empty tables.
+- `index.csv`, mapping files to questions, answers and datasets.
+- `details.json`, recording SQL and whether results were truncated.
+
+Exports include saved results across datasets in that chat and skip clarification-only
+replies. They use a snapshot of the chat, without rerunning queries or calling the API.
+Only saved result rows are exported, not the full dataset. NULLs become blank cells;
+formula-like text is escaped for spreadsheet safety.
+
+<details>
+<summary>Commands and terminal usage</summary>
+
+| Action | Command / control |
+| --- | --- |
+| New chat | Ctrl+N or `/new` |
+| Choose CSV | Load CSV or `/load` |
+| Restore bundled sample | `/sample` |
+| Preview imported rows | `show data` |
+| Count imported rows | `how many rows` |
+| Run checked SQL locally | `/sql SELECT * FROM records LIMIT 10` |
+| Help | `/help` |
+| Force a mode at launch | `python app.py --ai` or `python app.py --demo` |
+| Paid connection check | `python app.py --check-ai` |
 
 ```bash
-.venv/bin/python app.py --ai
+python app.py --ask 'What is the total revenue?'
+# Reuse the returned chat ID:
+python app.py --chat CHAT_ID --ask 'Show monthly revenue'
 ```
 
-AI mode sends questions, limited recent context, schema/definitions and bounded query
-results to the configured OpenAI API. It may incur API charges; this application does
-not use Codex sign-in. Trace export is disabled. Keys remain in the ignored `.env` file.
-CSV import, saved definitions and offline questions make no model calls. `/sql` always runs locally.
+`--ask` uses the offline route unless `--ai` is supplied. The connection check uses
+disposable data and does not create a normal saved chat.
 
-Without credentials, the app explains the missing setup. General natural-language
-questions and follow-ups are only supported through the AI route and are not yet
-live-evaluated. Offline mode will say when a question is unsupported.
+</details>
 
-## CSV support and local storage
+## Verification and current limits
 
-Load one UTF-8, comma-separated CSV at a time: up to 5 MB, 50,000 rows, 100 columns,
-and 10,000 characters per cell. The import rejects duplicate headers, invalid row widths,
-and invalid encoding. It previews column types and blank counts before activation.
-Leading-zero identifiers remain text; blank cells become SQL NULL. Dates remain text.
-The active table for custom CSVs is `records`; use quoted column identifiers where needed.
+**Development checks completed on 21 October 2026:**
 
-Column meanings and currencies are not guessed. Use **Settings → Data definitions** to save what columns mean, which currency they use,
-and any calculation rules (up to 8,000 characters). The model receives these definitions
-with each new question; it should still ask about anything unclear. Definitions are
-versioned per dataset and survive restarts. Editing them resets the recent model context
-for chats using that dataset; old answers retain their original definition snapshots.
-The bundled sample definitions are read-only.
-The original source file can be moved afterward: a snapshot is stored locally.
+| Check | Result | What it establishes |
+| --- | --- | --- |
+| Automated suite | **153 passed** in a fresh Python 3.12 environment | Local logic, persistence, SQL restrictions, SDK mocks and headless UI behaviour |
+| Offline retail evaluation | **12/12 passed** | Deterministic sample answers against independent references |
+| Tips CSV evaluation | **19/19 passed** | CSV/Decimal references, filtering, empty results, exports and persistence |
+| Live AI: tips | **6/6 passed** | Follow-up filters, confirmation and definition reuse in a fresh chat/store |
+| Live AI: retail | **3/3 passed** | Total revenue, France follow-up and declining profit without costs |
+| Live AI: supermarket | **3/3 passed** | Leading branch, branch-A product totals and most-used payment method |
+| Fresh installation | Passed; no broken dependency requirements | Offline query, reopening a chat in a new process and missing-key handling |
 
-Private files live under `data/private/`: metadata, chats, original CSV copies and per-dataset
-SQLite files. They are ignored by Git, as are `.env`, virtual environments and private
-planning PDFs. There is no automatic cloud backup. `--home /path/to/folder` selects
-another local storage directory.
+The 12 live cases used the configured `gpt-6-luna` model. Answers and SQL were reviewed
+alongside the automated checks. The runs reported **28 model requests, 52,536 input
+tokens and 2,025 output tokens** in total. One tips query used an incorrect table name,
+was rejected, and was repaired before the final answer. These are small development
+regressions, **not a general accuracy benchmark or a guarantee for arbitrary CSVs**.
 
-A terminal connection check is also available:
+The current milestone is complete. The user has manually confirmed that the native
+macOS file picker opens correctly. Automated tests separately cover selection and
+cancellation behaviour using substitutes for the native dialogs.
+
+Run the local checks without paid model calls:
 
 ```bash
-.venv/bin/python app.py --check-ai
+python -m pip install -r requirements-dev.txt
+python -m pytest -q
+python -m evaluation.evaluate
+python -m evaluation.evaluate_tips
 ```
 
-It reads the local `.env`, uses disposable test data, and returns a nonzero exit status
-on missing credentials or an unverified result. It never creates a normal saved chat.
+<details>
+<summary>Run the optional paid live evaluation</summary>
 
-## Verification
+Preview questions and independently calculated references without API calls:
 
 ```bash
-.venv/bin/python -m pip install -r requirements-dev.txt
-.venv/bin/python -m pytest -q
-.venv/bin/python -m evaluation.evaluate
+python -m evaluation.evaluate_live --suite tips
 ```
 
-Current local result: **60 tests passed; 12/12 offline evaluation cases passed.**
-
-The tests exercise allowed queries, rejected writes/attachments/functions, SQLite
-read-only enforcement, output caps, timeouts, CSV validation, persistence and isolation,
-SDK tool wiring with a mocked runner, source-data reconciliation, and headless terminal
-interactions. The offline evaluation has 12 verified regression cases; reference totals
-come from independent Python Decimal calculations over the CSV, not the application's SQL.
-Evaluation writes an ignored report to `evaluation/results/offline.json`.
-
-These checks measure local code and deterministic demo behaviour, **not live-model
-answer accuracy**. A successful SQL query is not proof of correct interpretation.
-
-For a scriptable smoke check:
+Explicitly run the live suite:
 
 ```bash
-.venv/bin/python app.py --ask 'What is the total revenue?'
-# Reuse the printed chat ID on subsequent runs:
-.venv/bin/python app.py --chat CHAT_ID --ask 'Show monthly revenue'
+python -m evaluation.evaluate_live --live --suite tips --max-questions 6
 ```
 
-## Next milestones
+Suites are `tips` (6), `retail` (3), `supermarket` (3), and `all` (12). The default
+six-question cap still applies to `all`; choose `--max-questions 12` to run all cases.
+The CSVs must be present in `data/sample/`. The runner uses disposable storage and
+the configured key/model, with an optional `--model` override.
 
-- Verify an authenticated Luna/tool round-trip and record token usage and API cost.
-- Expand held-out natural-language evaluations, including follow-ups and filter retention.
-- Compare small-schema context against retrieval before introducing embeddings/reranking.
+It stops at the first failed check, missing usage or exhausted question limit.
+`--token-stop 30000` and `--seconds-stop 480` stop starting new questions after the
+thresholds are reached; an in-flight question can exceed them. These are not hard
+spending limits. There are no automatic suite reruns or provider retries.
 
-See [architecture and boundaries](docs/architecture.md). No software licence has been added.
+Ignored `evaluation/results/live-*.json` reports contain questions, references, answers,
+SQL/results, errors, latency, reported usage and dataset/code hashes. Partial results
+are saved as the run proceeds. Unreported usage after an API failure is marked
+incomplete, not free. No API key is written to the reports. Read the SQL and prose as
+well as the pass/fail result; numerical agreement does not prove correct interpretation.
+
+</details>
+
+## Sample data and project notes
+
+The bundled sample derives from **Daqing Chen (2015), Online Retail**,
+[UCI Machine Learning Repository](https://archive.ics.uci.edu/dataset/352/online-retail),
+[DOI 10.24432/C5BW33](https://doi.org/10.24432/C5BW33), under
+[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
+
+It retains the first 25 ordinary and 5 cancellation invoices per month, with all their
+lines, from December 2010 to December 2011. It contains **6,224 lines and 390 invoices**.
+Net invoiced revenue is signed quantity × unit price in GBP, excluding negative prices
+and retaining credits: **£117,058.55**. This deliberately selected sample does not
+represent full-retailer revenue or trends. See the [sample provenance](data/sample/README.md),
+[data manifest](data/sample/manifest.json), [dictionary](data/knowledge/data_dictionary.md)
+and [business rules](data/knowledge/business_rules.md).
+
+The screenshots also use the supplied `tips.csv` and `supermarket_sales - Sheet1.csv`
+fixtures. The [screenshot catalogue](screenshots/manifest.json) records capture provenance.
+The [PDF walkthrough](docs/ask-your-data-walkthrough.pdf) is intended for reviewing
+the product without running it. To rebuild it separately from the app, install
+`reportlab` and run `python scripts/build_walkthrough.py`.
+
+## Future improvements
+
+These are possible extensions beyond the completed current milestone:
+
+- **Broader evaluation:** more held-out questions, unfamiliar datasets and messy-data fixtures.
+- **More platforms:** native file selection and export dialogs for Windows and Linux.
+- **Visual analysis:** optional charts alongside answer tables, with the underlying results still inspectable.
+- **Model comparisons:** compare answer quality, latency and reported token usage across supported models.
+- **Larger schemas:** evaluate retrieval against the current full-schema approach before adding embeddings or reranking.
+
+See [architecture and boundaries](docs/architecture.md). The walkthrough PDF and
+architecture document live together in `docs/`; all current images live in `screenshots/`.
+No software licence has been added to this repository.

@@ -1,0 +1,82 @@
+{
+  "capture_method": "Textual app run_test/save_screenshot; rendered application UI, not desktop screen captures or mockups.",
+  "captured_on": "2026-10-21",
+  "terminal_size": [
+    110,
+    44
+  ],
+  "screenshots": [
+    {
+      "file": "01-welcome-demo.png",
+      "title": "Start without an API key",
+      "description": "Bundled retail data, example questions and a visible Demo mode indicator.",
+      "source": "Actual empty app state; no model call."
+    },
+    {
+      "file": "02-retail-demo-answers.png",
+      "title": "Ask questions in demo mode",
+      "description": "Net revenue and the top five products, with a separate View results button for each answer.",
+      "source": "Actual offline calculations on bundled retail data."
+    },
+    {
+      "file": "03-csv-import-preview.png",
+      "title": "Preview your CSV before importing",
+      "description": "The import preview shows 244 rows, inferred column types and empty-cell counts.",
+      "source": "Actual CSV inspection. File selection supplied directly; native Finder is not shown."
+    },
+    {
+      "file": "04-ai-formatted-answer.png",
+      "title": "Read a formatted AI answer",
+      "description": "A supermarket analysis displays a proper table, an explicit branch filter and answer-specific evidence.",
+      "source": "Saved answer from the successful live AI evaluation, replayed with locally verified SQL; no new API call."
+    },
+    {
+      "file": "05-thinking-and-draft.png",
+      "title": "Keep writing while the answer is loading",
+      "description": "The submitted question and Thinking indicator are visible. The next draft is editable while Ask is disabled.",
+      "source": "Actual pending UI state with a controlled delayed test response; no live request."
+    },
+    {
+      "file": "06-answer-results.png",
+      "title": "Inspect the exact result rows",
+      "description": "The result view belongs to this answer and identifies the dataset used.",
+      "source": "Actual result viewer, using the replayed query results."
+    },
+    {
+      "file": "07-answer-sql.png",
+      "title": "Inspect the SQL behind the answer",
+      "description": "The executed query shows the aggregation, branch filter and grouping.",
+      "source": "Actual SQL tab for the same answer."
+    },
+    {
+      "file": "08-follow-up-filters.png",
+      "title": "Refine a question across follow-ups",
+      "description": "Dinner \u2192 Sunday dinner \u2192 non-smokers, retaining earlier filters and showing evidence for each answer.",
+      "source": "Three saved live AI answers; all queries rerun against tips.csv and matched to the recorded results."
+    },
+    {
+      "file": "09-clarification-saved.png",
+      "title": "Remember a confirmed column meaning",
+      "description": "A confirmation produces a Definition saved notice and the verified size-6 result: average tip 5.225 across 4 rows.",
+      "source": "Saved live AI responses replayed through the real confirmation-saving workflow and real SQL."
+    },
+    {
+      "file": "10-export-confirmation.png",
+      "title": "Choose where to save all chat results",
+      "description": "The confirmation lists three result CSV files plus an index and query details. Cancel preserves the visible draft.",
+      "source": "Actual export flow after supplying a destination. Native Finder is not shown. Cancel was exercised; no export was written."
+    },
+    {
+      "file": "11-saved-chats.png",
+      "title": "Return to a saved conversation",
+      "description": "Conversations across retail, supermarket and tips data are labelled with their dataset.",
+      "source": "Actual saved-chat selector populated only with disposable demonstration chats."
+    },
+    {
+      "file": "12-connect-your-own-ai.png",
+      "title": "Connect your own AI account",
+      "description": "An empty API-key field, a model field, optional Test connection and session-key guidance. No credential is included.",
+      "source": "Actual AI settings dialog in an unconfigured state; no key and no connection test."
+    }
+  ]
+}
