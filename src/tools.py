@@ -2,7 +2,7 @@
 import sqlglot
 from sqlglot import exp
 
-from src.database import get_schema, run_query, quote
+from src.database import get_schema, query_capabilities, run_query, quote
 from src.retrieval import search_context
 from src.storage import Store
 from src.validation import validate_sql
@@ -37,6 +37,9 @@ class DatasetTools:
 
     def get_schema(self) -> dict:
         return get_schema(self.path)
+
+    def sql_capabilities(self) -> dict:
+        return query_capabilities(self.path)
 
     def search_context(self, question: str) -> list[dict]:
         return self.context

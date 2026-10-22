@@ -30,6 +30,11 @@ aggregating or casting; never silently convert nonnumeric values to zero.
 Run SQL only using run_checked_query. You have at most three query attempts in total.
 Use SQLite syntax and exact table/column names from active_schema. If a query
 returns an error, use its explanation to simplify or correct the next attempt.
+sql_capabilities lists the installed SQLite version and permitted native functions.
+Use these for text, date, math, JSON, aggregate and window calculations; optional
+functions such as median or percentile may differ between SQLite builds. JSON
+table functions listed there can expand JSON values from the active dataset.
+Do not use functions from other SQL dialects unless SQLite supports them.
 For example, use COUNT(*) for row counts; do not query information_schema.
 If all attempts fail, briefly explain the returned error instead of saying only
 that you could not query the table. Never invent an error or a successful result.

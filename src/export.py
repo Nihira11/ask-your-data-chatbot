@@ -51,7 +51,8 @@ def export_chat_results(destination: Path, chat_id: str, history: list[dict], da
                 name = f'answer-{answer_number:03d}-query-{query_number:02d}.csv'
                 write_csv(folder / name, query['columns'], query['rows'])
                 answer['results'].append({'file': name, 'rows': len(query['rows']),
-                                          'truncated': query['truncated'], 'sql': query['sql']})
+                                          'truncated': query['truncated'], 'sql': query['sql'],
+                                          'warnings': query.get('warnings', [])})
                 index_rows.append([name, question, answer['answer'], dataset_name, message['id'],
                                    query_number, len(query['rows']), query['truncated']])
             notes['answers'].append(answer)

@@ -25,11 +25,29 @@ are saved locally.
 
 ## Query boundary
 
-SQLGlot parses one SELECT or read-only set operation; checks apply to nested
-statements and table/function references. Only the active database's tables and a
-small analytic function allowlist are permitted. SQLite opens in mode=ro, enables
+SQLGlot parses one SELECT, VALUES or read-only set operation; checks apply to nested
+statements and table references. Only the active database's tables and explicitly
+permitted JSON table functions are accessible. SQLite opens in mode=ro, enables
 query_only, disables trusted_schema, and applies its own authorizer. Extension/file
 functions, schema tables, database attachments, writes and recursive CTEs are blocked.
+Function permissions come from `PRAGMA function_list` on the actual query connection.
+The authorizer permits native built-ins carrying SQLite's `SQLITE_INNOCUOUS` flag,
+plus reviewed built-in median/percentile aggregates on builds exposing them without
+that flag. Extension/UDF names and built-ins with custom overloads are excluded;
+`load_extension`, `sqlite_log`, `randomblob` and `zeroblob` are explicitly denied.
+See [SQLite's function flags](https://www.sqlite.org/c3ref/c_deterministic.html).
+The original SQL is executed unchanged, avoiding SQLGlot's normalized function names
+and dialect transformations. Text, date, math, JSON/JSONB, aggregate and window
+functions therefore follow the installed engine's capabilities. AI context includes
+the engine version and actual permitted function list, including optional functions.
+
+The four JSON/JSONB each/tree table functions are explicitly permitted when available.
+Trusted literal-only initialization connects these SQLite modules before installing
+the authorizer, so the user query never receives internal schema-write permissions.
+Other table functions and schema reads stay blocked. JSON functions can transform
+values in a result without modifying stored data.
+Non-finite numeric results become labelled strings. BLOB results become hexadecimal
+SQL literals. Both carry warnings saved with the answer and retained in export metadata.
 The query progress handler cancels after three seconds of SQLite execution. A result
 contains at most 100 rows; this cap is applied after execution, not before aggregation.
 Duplicate result-column labels retain positional values. SQLite values are capped at

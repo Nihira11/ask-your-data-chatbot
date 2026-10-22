@@ -62,6 +62,11 @@ async def test_sdk_tool_roundtrip_with_fake_runner(store, simple_dataset, monkey
     async def fake_run(agent, recent, **kwargs):
         assert kwargs['max_turns'] == 8
         assert kwargs['run_config'].tracing_disabled
+        capabilities = json.loads(recent[-1]['content'])['sql_capabilities']
+        assert capabilities['dialect'] == 'sqlite'
+        assert {'sum', 'ltrim', 'first_value', 'json_extract'} <= set(capabilities['functions'])
+        assert 'load_extension' not in capabilities['functions']
+        assert 'pragma_table_info' not in capabilities['json_table_functions']
         registered = {tool.name: tool for tool in agent.tools}
         assert set(registered) == {'get_schema', 'search_context', 'run_checked_query'}
         from agents.tool_context import ToolContext
@@ -90,3 +95,20 @@ async def test_no_model_answer_without_current_evidence(store, simple_dataset, m
     result = await ai_answer('revenue', DatasetTools(store, simple_dataset), [])
     assert result['status'] == 'unable'
     assert '999' not in result['answer']
+
+
+async def test_overflow_answer_and_export_survive_reopening(store, simple_dataset, tmp_path):
+    from src.export import export_chat_results
+    from src.storage import Store
+    chat = store.new_chat(simple_dataset)
+    response = await ask(store, chat, '/sql SELECT 1e308 * 10 AS huge')
+    assert response['status'] == 'answer'
+    assert response['queries'][0]['rows'] == [['Infinity']]
+    assert 'Non-finite' in response['answer']
+    history = Store(store.home).messages(chat)
+    assert len(history) == 2
+    assert history[-1]['payload'] == response
+    folder = export_chat_results(tmp_path, chat, history, {simple_dataset: 'test.csv'})
+    details = json.loads((folder / 'details.json').read_text())
+    assert details['answers'][0]['results'][0]['warnings'] == response['queries'][0]['warnings']
+    assert 'Infinity' in (folder / 'answer-001-query-01.csv').read_text()

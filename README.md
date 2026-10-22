@@ -161,6 +161,22 @@ removed when leaving them; submitted messages and imported datasets are retained
 Unsent drafts survive chat switching within the current session. Your next draft is
 never sent automatically when an answer finishes.
 
+**SQL support.** Most native SQLite analytical functions are available: text and
+formatting, dates, math, JSON/JSONB, aggregates and all built-in window functions.
+Joins, subqueries, non-recursive CTEs, set operations, aggregate filters, window
+frames and `VALUES` work too. JSON table functions can expand values from your
+dataset. Optional functions such as math, median and percentiles depend on your
+installed SQLite build; AI mode receives the actual permitted function list.
+
+The function policy uses SQLite's native built-in catalog and safety flags, rather
+than a small list of SQLGlot expression names. Extension/custom functions, file
+access, logging, `randomblob`/`zeroblob`, schema inspection, writes and recursive
+queries remain blocked. SQLGlot checks query structure and dataset references;
+SQLite authorizes the original SQL's native function names before execution.
+Numeric overflow is saved as a labelled `Infinity` or `-Infinity` value with a
+warning. Binary results use hexadecimal SQL literals such as `X'4142'`, so JSON
+and chat exports remain usable.
+
 **Definitions.** A clear confirmation saves one displayed, structured column proposal.
 Unrelated replies and filters do not become definitions. Definitions can also be edited
 in Settings, up to 8,000 characters. Edits reset the recent model context for affected
@@ -177,6 +193,8 @@ existing parent. Cancel or Escape saves nothing and preserves the draft. A new
 - One CSV for every saved query result, including follow-ups and empty tables.
 - `index.csv`, mapping files to questions, answers and datasets.
 - `details.json`, recording SQL and whether results were truncated.
+
+Query warnings, including numeric overflow, are retained in `details.json`.
 
 Exports include saved results across datasets in that chat and skip clarification-only
 replies. They use a snapshot of the chat, without rerunning queries or calling the API.

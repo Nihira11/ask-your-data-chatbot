@@ -155,12 +155,13 @@ async def ai_answer(question: str, tools: DatasetTools, history: list[dict], *, 
     @function_tool
     def run_checked_query(sql: str) -> str:
         """Validate and run one read-only SQLite query on the active dataset."""
-        return json.dumps(tools.run_checked_query(sql))
+        return json.dumps(tools.run_checked_query(sql), allow_nan=False)
 
     tools.check_categories = True
     recent = recent_context(history)
     recent.append({'role': 'user', 'content': json.dumps({
         'question': question, 'active_schema': tools.get_schema(),
+        'sql_capabilities': tools.sql_capabilities(),
         'category_values': tools.category_values(),
         'definitions': tools.search_context(question),
         'context_note': 'Earlier answers are history only. Query the current dataset for new numbers.'
@@ -211,6 +212,9 @@ async def ask(store: Store, chat_id: str, question: str, *, use_ai: bool = False
         response = offline_answer(question, tools, kind)
     response.update(dataset_id=dataset_id, mode='ai' if remote else 'offline', queries=tools.results,
                     sources=tools.search_context(question), query_errors=tools.errors)
+    warnings = dict.fromkeys(warning for result in tools.results for warning in result.get('warnings', []))
+    for warning in warnings:
+        response['answer'] += '\n\nQuery note: ' + warning
     if memory_notice:
         response['answer'] += '\n\n' + memory_notice
     store.append(chat_id, dataset_id, 'assistant', response)

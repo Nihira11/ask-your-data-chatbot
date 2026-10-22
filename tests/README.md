@@ -5,6 +5,12 @@ Tests use temporary SQLite databases, source CSV/Decimal reconciliation, a mocke
 runner, and Textual's headless Pilot. They make no paid model calls and do not use
 private CSVs or normal chat history.
 
+SQL compatibility tests execute every permitted native function on the installed
+build through SQLGlot's structural checks and SQLite's authorizer, comparing results
+with native execution. They cover JSON table expansion, joins, subqueries, set operations,
+aggregate filters, window frames, optional functions, binary results and rejected
+extension/custom-function access.
+
 `python -m evaluation.evaluate` runs 12 deterministic offline reference cases.
 These are regression checks, not a live LLM benchmark. Questions marked draft are
 rejected. These offline checks do not measure model accuracy, follow-up success,

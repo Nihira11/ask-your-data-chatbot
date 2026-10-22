@@ -8,12 +8,9 @@ class QueryValidationError(ValueError):
     """The query is not approved for execution."""
 
 
-# A deliberately small analytical function surface. SQLite repeats this check.
-FUNCTIONS = {'ABS', 'AVG', 'CAST', 'COALESCE', 'COUNT', 'DATE', 'DATETIME',
-             'IF', 'IFNULL', 'JULIANDAY', 'LENGTH', 'LOWER', 'MAX', 'MIN',
-             'NULLIF', 'ROUND', 'STRFTIME', 'SUBSTR', 'SUBSTRING', 'SUM',
-             'TIME', 'TRIM', 'UPPER', 'ROW_NUMBER', 'RANK', 'DENSE_RANK',
-             'LAG', 'LEAD', 'TOTAL', 'TIMETOSTR', 'TSTORDS', 'EXTRACT'}
+# These functions only expand supplied JSON values into rows. Arbitrary table
+# functions (including pragma_*, dbstat and extension modules) remain forbidden.
+JSON_TABLE_FUNCTIONS = frozenset({'json_each', 'json_tree', 'jsonb_each', 'jsonb_tree'})
 
 
 def validate_sql(sql: str, allowed_tables: set[str]) -> str:
@@ -23,8 +20,8 @@ def validate_sql(sql: str, allowed_tables: set[str]) -> str:
         statements = sqlglot.parse(sql, read='sqlite')
     except (SqlglotError, RecursionError) as exc:
         raise QueryValidationError('The SQL could not be parsed.') from exc
-    if len(statements) != 1 or not isinstance(statements[0], (exp.Select, exp.Union, exp.Intersect, exp.Except)):
-        raise QueryValidationError('Only one read-only SELECT statement is allowed.')
+    if len(statements) != 1 or not isinstance(statements[0], (exp.Select, exp.Union, exp.Intersect, exp.Except, exp.Values)):
+        raise QueryValidationError('Only one read-only SELECT or VALUES statement is allowed.')
     tree = statements[0]
     forbidden = (exp.DDL, exp.DML, exp.Command, exp.Into, exp.Lock, exp.Pragma)
     if any(isinstance(node, forbidden) for node in tree.walk()):
@@ -34,16 +31,14 @@ def validate_sql(sql: str, allowed_tables: set[str]) -> str:
     ctes = {node.alias_or_name.lower() for node in tree.find_all(exp.CTE)}
     permitted = {name.lower() for name in allowed_tables}
     for table in tree.find_all(exp.Table):
+        if (isinstance(table.this, exp.Anonymous) and table.this.name.lower() in JSON_TABLE_FUNCTIONS
+                and not table.db and not table.catalog):
+            continue
         if not isinstance(table.this, exp.Identifier) or table.db or table.catalog:
             raise QueryValidationError('External databases and table functions are not allowed.')
         if table.name.lower() not in permitted | ctes:
             raise QueryValidationError(f'Table {table.name!r} is not in the active dataset.')
-    for func in tree.find_all(exp.Func):
-        # SQLGlot models these SQL operators as Func nodes. They are not
-        # callable functions; their nested expressions are still checked below.
-        if isinstance(func, (exp.And, exp.Or, exp.Case)):
-            continue
-        name = func.name.upper() if isinstance(func, exp.Anonymous) else func.sql_name().upper()
-        if name not in FUNCTIONS:
-            raise QueryValidationError(f'Function {name} is not supported.')
+    # Validate structure here, then let SQLite authorize actual native function
+    # names during preparation. Never rewrite SQL through SQLGlot: its normalized
+    # names are not SQLite names, and can change across parser versions.
     return sql.strip().rstrip(';')
