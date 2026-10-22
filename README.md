@@ -147,7 +147,7 @@ basic local inspection and explicit `/sql` commands do not call a model.
 | Boundary | Current behaviour |
 | --- | --- |
 | CSV input | One active UTF-8, comma-separated file per chat; up to 5 MB, 50,000 rows, 100 columns and 10,000 characters per cell |
-| Validation | Rejects duplicate headers, malformed row widths and invalid encoding |
+| Validation | Trims surrounding header spaces; rejects duplicate headers, malformed row widths and invalid encoding |
 | Types | Preserves leading-zero identifiers as text; blank/whitespace cells become NULL; dates remain text; literal `N/A` remains text |
 | Custom CSV table | `records`; quote column names containing spaces or special characters |
 | SQL | Validated read-only queries, restricted functions, execution timeout and bounded output; at most 100 returned rows |
@@ -160,6 +160,9 @@ evidence and excludes them from the new dataset's model context. Unused new chat
 removed when leaving them; submitted messages and imported datasets are retained.
 Unsent drafts survive chat switching within the current session. Your next draft is
 never sent automatically when an answer finishes.
+Failed or cancelled answers save a short explanation with the submitted question.
+Queries, CSV preview/import and exports run in background threads so the interface
+can keep responding while they finish.
 
 **SQL support.** Most native SQLite analytical functions are available: text and
 formatting, dates, math, JSON/JSONB, aggregates and all built-in window functions.
@@ -228,6 +231,14 @@ disposable data and does not create a normal saved chat.
 </details>
 
 ## Verification and current limits
+
+**Review fixes checked on 22 October 2026:** **389 automated tests passed**,
+including execution coverage for all **139 permitted native functions/operators**
+and four JSON table functions on the installed SQLite 3.53.1 build, blocking-work UI
+responsiveness, interrupted answers and the other review regressions. The offline
+retail evaluation passed **12/12** and the tips evaluation passed **19/19**.
+These checks used temporary data and mocked AI calls; no new paid live evaluation
+was run for these fixes.
 
 **Development checks completed on 21 October 2026:**
 

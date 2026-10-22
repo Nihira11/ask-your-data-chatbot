@@ -42,7 +42,14 @@ def offline_answer(question: str, tools: DatasetTools, kind: str) -> dict:
         return csv_profile(normalized, tools)
     if question.lower().startswith('/sql '):
         sql = question[5:]
-    elif re.search(r'\b(delete|drop|update|insert|alter|remove)\b', normalized):
+    elif re.match(
+        r'^(?:(?:please|can you|could you|would you)\s+)*'
+        r'(?:delete\s+(?:from|all|the|records?|rows?|data)\b|'
+        r'drop\s+(?:table|view|index|trigger|database)\b|'
+        r'update\s+(?!me\b|us\b|on\b).+?\s+set\b|'
+        r'insert\s+(?:into|or)\b|alter\s+table\b|'
+        r'remove\s+(?:all|the|records?|rows?|data)\b)', normalized
+    ):
         return {'status': 'unable', 'answer': 'This assistant can only read data. It cannot modify or delete records.'}
     elif 'best' in normalized or 'performed' in normalized:
         return {'status': 'clarify', 'answer': 'Which metric do you mean—revenue, units, or invoice count—and for what period? Offline mode supports the example questions or /sql SELECT ….'}
@@ -143,9 +150,9 @@ async def ai_answer(question: str, tools: DatasetTools, history: list[dict], *, 
         proposed_definition: ProposedDefinition | None = None
 
     @function_tool
-    def get_schema() -> str:
+    async def get_schema() -> str:
         """Return the active dataset tables and column types."""
-        return json.dumps(tools.get_schema())
+        return json.dumps(await asyncio.to_thread(tools.get_schema))
 
     @function_tool
     def search_context(question: str) -> str:
@@ -153,16 +160,16 @@ async def ai_answer(question: str, tools: DatasetTools, history: list[dict], *, 
         return json.dumps(tools.search_context(question))
 
     @function_tool
-    def run_checked_query(sql: str) -> str:
+    async def run_checked_query(sql: str) -> str:
         """Validate and run one read-only SQLite query on the active dataset."""
-        return json.dumps(tools.run_checked_query(sql), allow_nan=False)
+        return json.dumps(await asyncio.to_thread(tools.run_checked_query, sql), allow_nan=False)
 
     tools.check_categories = True
     recent = recent_context(history)
     recent.append({'role': 'user', 'content': json.dumps({
-        'question': question, 'active_schema': tools.get_schema(),
-        'sql_capabilities': tools.sql_capabilities(),
-        'category_values': tools.category_values(),
+        'question': question, 'active_schema': await asyncio.to_thread(tools.get_schema),
+        'sql_capabilities': await asyncio.to_thread(tools.sql_capabilities),
+        'category_values': await asyncio.to_thread(tools.category_values),
         'definitions': tools.search_context(question),
         'context_note': 'Earlier answers are history only. Query the current dataset for new numbers.'
     })})
@@ -201,21 +208,37 @@ async def ask(store: Store, chat_id: str, question: str, *, use_ai: bool = False
     }
     remote = use_ai and not question.lower().startswith('/sql ') and not local_profile
     store.append(chat_id, dataset_id, 'user', {'answer': question})
-    memory_notice = remember_confirmation(store, chat_id, dataset_id, question, history) if remote else None
-    # Capture the updated definitions before the model answers this confirmation.
-    tools = DatasetTools(store, dataset_id)
-    # Explicit SQL is always local, including when the user selected AI mode.
-    if remote:
-        response = await ai_answer(question, tools, history, config=config)
-        pending_definition(response, tools)
-    else:
-        response = offline_answer(question, tools, kind)
-    response.update(dataset_id=dataset_id, mode='ai' if remote else 'offline', queries=tools.results,
-                    sources=tools.search_context(question), query_errors=tools.errors)
-    warnings = dict.fromkeys(warning for result in tools.results for warning in result.get('warnings', []))
-    for warning in warnings:
-        response['answer'] += '\n\nQuery note: ' + warning
-    if memory_notice:
-        response['answer'] += '\n\n' + memory_notice
+    mode = 'ai' if remote else 'offline'
+    try:
+        memory_notice = remember_confirmation(store, chat_id, dataset_id, question, history) if remote else None
+        # Capture the updated definitions before the model answers this confirmation.
+        tools = await asyncio.to_thread(DatasetTools, store, dataset_id)
+        # Explicit SQL and CSV inspection run locally, off the UI event loop.
+        if remote:
+            response = await ai_answer(question, tools, history, config=config)
+            await asyncio.to_thread(pending_definition, response, tools)
+        else:
+            response = await asyncio.to_thread(offline_answer, question, tools, kind)
+        response.update(dataset_id=dataset_id, mode=mode, queries=tools.results,
+                        sources=tools.search_context(question), query_errors=tools.errors)
+        warnings = dict.fromkeys(warning for result in tools.results for warning in result.get('warnings', []))
+        for warning in warnings:
+            response['answer'] += '\n\nQuery note: ' + warning
+        if memory_notice:
+            response['answer'] += '\n\n' + memory_notice
+    except asyncio.CancelledError:
+        # A cancelled to_thread call may finish its read in the background. Save
+        # no partial evidence, and complete the submitted turn before re-raising.
+        store.append(chat_id, dataset_id, 'assistant', {
+            'status': 'unable', 'answer': 'Answer interrupted before completion. Please try again.',
+            'dataset_id': dataset_id, 'mode': mode, 'queries': [], 'sources': [], 'query_errors': [],
+        })
+        raise
+    except Exception:
+        # Persist a safe reply so reopening the chat never silently loses a failure.
+        response = {
+            'status': 'unable', 'answer': 'Could not finish this answer. Please try again.',
+            'dataset_id': dataset_id, 'mode': mode, 'queries': [], 'sources': [], 'query_errors': [],
+        }
     store.append(chat_id, dataset_id, 'assistant', response)
     return response

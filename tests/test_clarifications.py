@@ -157,3 +157,40 @@ async def test_sdk_structured_clarification_saves_only_after_confirmation(store,
     messages = store.messages(chat)
     assert messages[-3]['payload']['answer'] == 'yes please'
     assert messages[-2]['payload']['answer'] == 'Definition saved: Quantity means units sold.'
+
+
+async def test_column_mentioned_in_other_meaning_can_still_be_defined(store, tmp_path, monkeypatch):
+    path = tmp_path / 'tax.csv'
+    path.write_text('Total,Tax\n100,10\n')
+    dataset = import_csv(store, inspect_csv(path))
+    chat = store.new_chat(dataset)
+    store.save_definitions(chat, 'Total means the amount including tax.')
+
+    async def clarify(*args, **kwargs):
+        return {'status': 'clarify', 'answer': 'Does Tax mean the tax rate?',
+                'proposed_definition': {'column': 'Tax', 'meaning': 'the tax rate'}}
+
+    monkeypatch.setattr('src.workflow.ai_answer', clarify)
+    response = await ask(store, chat, 'What is Tax?', use_ai=True)
+    assert response['pending_definition']['column'] == 'Tax'
+    monkeypatch.setattr('src.workflow.ai_answer', no_answer)
+    await ask(store, chat, 'yes', use_ai=True)
+    assert store.dataset(dataset)['metadata']['confirmed_definitions'] == (
+        'Total means the amount including tax.\nTax means the tax rate.')
+    monkeypatch.setattr('src.workflow.ai_answer', clarify)
+    assert 'pending_definition' not in await ask(store, chat, 'What is Tax?', use_ai=True)
+
+
+@pytest.mark.parametrize('column,existing', [('Tax rate', 'Tax-rate'), ('Tax means rate', 'Tax')])
+def test_definition_prefix_matches_literal_column_name(store, tmp_path, column, existing):
+    from src.clarifications import pending_definition
+    from src.tools import DatasetTools
+    path = tmp_path / 'names.csv'
+    path.write_text(f'{column},{existing}\n1,2\n')
+    dataset = import_csv(store, inspect_csv(path))
+    chat = store.new_chat(dataset)
+    store.save_definitions(chat, f'{existing} means a previously defined value.')
+    response = {'status': 'clarify', 'answer': f'Does {column} mean amount charged?',
+                'proposed_definition': {'column': column, 'meaning': 'amount charged'}}
+    pending_definition(response, DatasetTools(store, dataset))
+    assert response['pending_definition']['column'] == column

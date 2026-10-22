@@ -9,7 +9,10 @@ SQL compatibility tests execute every permitted native function on the installed
 build through SQLGlot's structural checks and SQLite's authorizer, comparing results
 with native execution. They cover JSON table expansion, joins, subqueries, set operations,
 aggregate filters, window frames, optional functions, binary results and rejected
-extension/custom-function access.
+extension/custom-function access. Responsiveness tests hold
+real blocking operations in background threads while exercising drafting, import,
+preview dismissal and export in Textual. Cancellation, numeric overflow, definition
+matching, trimmed headers and rebuilding a missing sample database are covered too.
 
 `python -m evaluation.evaluate` runs 12 deterministic offline reference cases.
 These are regression checks, not a live LLM benchmark. Questions marked draft are

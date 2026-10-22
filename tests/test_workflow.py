@@ -97,6 +97,28 @@ async def test_no_model_answer_without_current_evidence(store, simple_dataset, m
     assert '999' not in result['answer']
 
 
+@pytest.mark.parametrize('question', [
+    'Update me on the total revenue', 'What caused the drop in revenue?',
+    'Show revenue after the update', 'How many rows contain delete?',
+    'Remove duplicates from this summary',
+])
+async def test_ordinary_words_do_not_trigger_modification_warning(store, simple_dataset, question):
+    chat = store.new_chat(simple_dataset)
+    response = await ask(store, chat, question)
+    assert 'Demo mode could not match' in response['answer']
+    assert 'only read data' not in response['answer']
+
+
+@pytest.mark.parametrize('question', [
+    'Delete all records', 'Please remove all rows', 'DROP TABLE records',
+    'UPDATE records SET amount = 0', 'INSERT INTO records VALUES (1)',
+    'ALTER TABLE records ADD COLUMN x',
+])
+async def test_actual_modifications_still_receive_readonly_warning(store, simple_dataset, question):
+    chat = store.new_chat(simple_dataset)
+    assert 'only read data' in (await ask(store, chat, question))['answer']
+
+
 async def test_overflow_answer_and_export_survive_reopening(store, simple_dataset, tmp_path):
     from src.export import export_chat_results
     from src.storage import Store
@@ -112,3 +134,39 @@ async def test_overflow_answer_and_export_survive_reopening(store, simple_datase
     details = json.loads((folder / 'details.json').read_text())
     assert details['answers'][0]['results'][0]['warnings'] == response['queries'][0]['warnings']
     assert 'Infinity' in (folder / 'answer-001-query-01.csv').read_text()
+
+
+async def test_unexpected_failure_persists_safe_assistant_reply(store, simple_dataset, monkeypatch):
+    from src.storage import Store
+    async def broken(*args, **kwargs):
+        raise RuntimeError('sensitive internal details')
+    monkeypatch.setattr('src.workflow.ai_answer', broken)
+    chat = store.new_chat(simple_dataset)
+    result = await ask(store, chat, 'A question', use_ai=True)
+    saved = Store(store.home).messages(chat)
+    assert [m['role'] for m in saved] == ['user', 'assistant']
+    assert saved[-1]['payload'] == result
+    assert result['status'] == 'unable'
+    assert 'Could not finish' in result['answer']
+    assert 'sensitive' not in str(saved)
+
+
+async def test_cancellation_persists_interrupted_reply_and_propagates(store, simple_dataset, monkeypatch):
+    import asyncio
+    from src.storage import Store
+    started = asyncio.Event()
+    async def waiting(*args, **kwargs):
+        started.set()
+        await asyncio.Event().wait()
+    monkeypatch.setattr('src.workflow.ai_answer', waiting)
+    chat = store.new_chat(simple_dataset)
+    task = asyncio.create_task(ask(store, chat, 'A question', use_ai=True))
+    await asyncio.wait_for(started.wait(), 2)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    saved = Store(store.home).messages(chat)
+    assert [m['role'] for m in saved] == ['user', 'assistant']
+    assert saved[-1]['payload']['status'] == 'unable'
+    assert 'interrupted' in saved[-1]['payload']['answer']
+    assert saved[-1]['payload']['queries'] == []

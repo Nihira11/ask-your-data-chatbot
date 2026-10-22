@@ -54,6 +54,14 @@ Duplicate result-column labels retain positional values. SQLite values are cappe
 1 MB; imported CSV cells are capped at 10,000 characters. This is a local demo boundary,
 not an adversarial public-service sandbox or strict OS memory/CPU isolation.
 
+Local query execution, initial AI schema/category reads, registered AI query tools,
+CSV preview/import and file export use `asyncio.to_thread` to keep blocking work off
+Textual's event loop. Each SQLite connection is opened and closed within the operation
+that uses it. Import holds the active chat/dataset fixed while allowing an unsent draft.
+Graceful cancellation saves an interrupted-answer message before propagating cancellation;
+unexpected answer failures also save a safe explanation. A query already running in a
+thread may finish its bounded read after cancellation, without saving partial evidence.
+
 The AI run has eight agent turns, a 90-second wall-clock timeout and at most three
 SQL attempts (one initial attempt plus two repairs). Tracing is disabled, response
 storage is disabled in model settings, and raw provider errors are not persisted.
@@ -73,8 +81,11 @@ false zero. Derived queries are not checked this way; explicit `/sql` remains li
 ## CSV behaviour
 
 UTF-8 with optional BOM, comma delimiter, at most 5 MB, 50,000 rows and 100 columns.
-Strict width/header checks; case-insensitive duplicate headers are rejected. Integer
-columns without leading zeros become INTEGER; columns containing decimals and
+Strict width/header checks; case-insensitive duplicate headers are rejected.
+Header names are trimmed before validation, preview and table creation. Older imports
+retain their original schema; re-importing a file with padded headers creates a fresh
+normalized snapshot through the existing schema-upgrade path.
+Integer columns without leading zeros become INTEGER; columns containing decimals and
 optional whole numbers become REAL;
 other columns remain TEXT. Dates stay as text and their format needs inspection.
 Blanks become NULL. Business meanings are not inferred. Import preview confirms

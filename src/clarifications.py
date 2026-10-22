@@ -26,8 +26,10 @@ def pending_definition(response, tools):
     if metadata.get('definitions_revision', 0) != tools.definition_revision:
         return
     # Do not append a second, potentially conflicting meaning to a defined column.
-    existing = ' ' + normalized(metadata.get('confirmed_definitions', '')) + ' '
-    if ' ' + normalized(column) + ' ' in existing:
+    if any(
+        re.match(rf'^\s*{re.escape(column)}\s+means\b', line, re.IGNORECASE)
+        for line in metadata.get('confirmed_definitions', '').splitlines()
+    ):
         return
     response['pending_definition'] = {
         'column': column, 'meaning': meaning, 'dataset_id': tools.dataset_id,

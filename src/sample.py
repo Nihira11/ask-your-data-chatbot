@@ -14,9 +14,12 @@ SAMPLE_DIR = ROOT / 'data' / 'sample'
 def ensure_sample(store: Store) -> str:
     manifest = json.loads((SAMPLE_DIR / 'manifest.json').read_text())
     dataset_id = manifest['version']
+    registered = False
     try:
         store.dataset(dataset_id)
-        return dataset_id
+        registered = True
+        if store.dataset_path(dataset_id).is_file():
+            return dataset_id
     except ValueError:
         pass
     source = SAMPLE_DIR / 'online_retail_sample.csv'
@@ -50,7 +53,8 @@ def ensure_sample(store: Store) -> str:
                            (row['invoice_date'], row['invoice_id']))
                 db.execute('INSERT INTO order_items (order_id, product_id, quantity, unit_price, invoice_date) VALUES (?, ?, ?, ?, ?)',
                            (row['invoice_id'], row['product_id'], int(row['quantity']), float(row['unit_price']), row['invoice_date']))
-        store.add_dataset(dataset_id, 'UCI Online Retail · sample', 'sample', manifest)
+        if not registered:
+            store.add_dataset(dataset_id, 'UCI Online Retail · sample', 'sample', manifest)
     except Exception:
         path.unlink(missing_ok=True)
         raise

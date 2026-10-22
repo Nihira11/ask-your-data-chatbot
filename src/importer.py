@@ -36,10 +36,10 @@ def inspect_csv(path: Path) -> dict:
         raise ValueError('CSV contains invalid null bytes.')
     try:
         reader = csv.reader(io.StringIO(text), strict=True)
-        headers = next(reader, [])
-        if not headers or len(headers) > MAX_COLUMNS or any(not h.strip() or len(h) > 100 for h in headers):
+        headers = [header.strip() for header in next(reader, [])]
+        if not headers or len(headers) > MAX_COLUMNS or any(not h or len(h) > 100 for h in headers):
             raise ValueError('CSV needs 1–100 non-empty column headers, each at most 100 characters.')
-        if len({h.strip().casefold() for h in headers}) != len(headers):
+        if len({h.casefold() for h in headers}) != len(headers):
             raise ValueError('Duplicate column headers are not supported.')
         if any(h.casefold().startswith('sqlite_') for h in headers):
             raise ValueError('Column names beginning sqlite_ are reserved.')

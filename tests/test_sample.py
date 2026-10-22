@@ -27,3 +27,17 @@ def test_normalization_and_revenue_against_source(store):
         for order_id, date in db.execute('SELECT order_id, order_date FROM orders'):
             assert date == min(dates[order_id])
         assert [r[0] for r in db.execute('SELECT invoice_date FROM order_items ORDER BY line_id')] == [r['invoice_date'] for r in rows]
+
+
+def test_deleted_sample_file_is_rebuilt_without_replacing_metadata_or_chat(store):
+    dataset = ensure_sample(store)
+    chat = store.new_chat(dataset)
+    store.append(chat, dataset, 'user', {'answer': 'An earlier question'})
+    original = store.dataset(dataset)
+    store.dataset_path(dataset).unlink()
+    assert ensure_sample(store) == dataset
+    assert store.dataset(dataset) == original
+    assert store.chat(chat)['dataset_id'] == dataset
+    assert len(store.messages(chat)) == 1
+    assert run_query(store.dataset_path(dataset), 'SELECT COUNT(*) FROM orders')['rows'] == [[390]]
+    assert ensure_sample(store) == dataset

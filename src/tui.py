@@ -1,6 +1,7 @@
 """A quiet, chat-first terminal interface; supporting details open on demand."""
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 from rich import box
@@ -108,14 +109,14 @@ class ImportScreen(Dialog):
         confirm.disabled = True
         try:
             path = await choose_csv_file()
-            self.file_chosen(path)
+            await self.file_chosen(path)
         except RuntimeError as exc:
             self.notify(str(exc), severity='error')
         finally:
             button.disabled = False
             confirm.disabled = self.inspected is None
 
-    def file_chosen(self, path):
+    async def file_chosen(self, path):
         if path is None:
             return
         self.inspected = None
@@ -124,7 +125,7 @@ class ImportScreen(Dialog):
         log = self.query_one('#import-preview', RichLog)
         log.clear()
         try:
-            self.inspected = inspect_csv(path)
+            self.inspected = await asyncio.to_thread(inspect_csv, path)
             data = self.inspected
             log.write(Text(f'{safe(data["name"])} · {len(data["rows"]):,} rows', style='bold'))
             for name, dtype in zip(data['headers'], data['types']):
@@ -745,15 +746,16 @@ class DataChatApp(App):
             if not await self.push_screen_wait(ExportConfirmScreen(destination, len(queries))):
                 self.notify('Export cancelled. Nothing was saved.')
                 return
-            folder = export_chat_results(destination, chat_id, history, datasets)
+            folder = await asyncio.to_thread(export_chat_results, destination, chat_id, history, datasets)
             self.push_screen(ExportScreen(folder, len(queries), any(q['truncated'] for q in queries)))
         except (OSError, ValueError, RuntimeError):
             self.notify('Could not save the results. Please try again and choose a writable folder.', severity='error')
         finally:
             self.exporting = False
-            button.disabled = self.busy
-            if not isinstance(self.screen, ExportScreen):
-                self.query_one('#question', Input).focus()
+            if not self.closing:
+                button.disabled = self.busy
+                if not isinstance(self.screen, ExportScreen):
+                    self.query_one('#question', Input).focus()
 
     @on(Button.Pressed, '#saved-chats')
     def saved_clicked(self):
@@ -809,15 +811,33 @@ class DataChatApp(App):
             self.push_screen(ImportScreen(), self.finish_import)
 
     def finish_import(self, inspected):
-        if inspected:
-            try:
-                dataset_id = import_csv(self.store, inspected)
-                self.store.activate(self.chat_id, dataset_id)
-                self.restore_chat()
-                self.query_one('#status', Static).update('File ready. Try “describe my data”.')
-            except (ValueError, OSError) as exc:
-                self.notify(str(exc), severity='error')
+        if inspected and not self.busy:
+            self.busy = True
+            self.pending_label = 'Importing CSV…'
+            self.query_one('#send', Button).disabled = True
+            self.restore_chat()
+            self.query_one('#status', Static).update('Importing CSV… You can draft your next question.')
+            self.import_dataset(inspected, self.chat_id)
         self.query_one('#question', Input).focus()
+
+    @work(group='import', exclusive=True)
+    async def import_dataset(self, inspected, chat_id):
+        ready = False
+        try:
+            dataset_id = await asyncio.to_thread(import_csv, self.store, inspected)
+            self.store.activate(chat_id, dataset_id)
+            ready = True
+        except (ValueError, OSError) as exc:
+            self.notify(str(exc), severity='error')
+        finally:
+            self.busy = False
+            self.pending_label = ''
+            if not self.closing:
+                self.restore_chat()
+                self.query_one('#send', Button).disabled = False
+                if ready:
+                    self.query_one('#status', Static).update('File ready. Try “describe my data”.')
+                self.query_one('#question', Input).focus()
 
     @on(Button.Pressed, '#example-total')
     @on(Button.Pressed, '#example-products')
@@ -881,6 +901,7 @@ class DataChatApp(App):
             self.busy = False
             self.pending_history = None
             self.pending_label = ''
-            self.restore_chat(scroll_to_end=True)
-            self.query_one('#send', Button).disabled = False
-            self.query_one('#question', Input).focus()
+            if not self.closing:
+                self.restore_chat(scroll_to_end=True)
+                self.query_one('#send', Button).disabled = False
+                self.query_one('#question', Input).focus()

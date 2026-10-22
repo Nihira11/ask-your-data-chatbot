@@ -104,3 +104,42 @@ def test_reimport_upgrades_old_types_without_mutating_saved_dataset(store, tmp_p
     assert store.dataset(fresh)['metadata']['confirmed_definitions'] == 'amount means total paid.'
     assert store.chat(chat)['dataset_id'] == old
     assert import_csv(store, inspect_csv(path)) == fresh
+
+
+def test_header_spaces_are_stripped_in_preview_schema_and_null_counts(store, tmp_path):
+    from src.database import get_schema
+    path = tmp_path / 'spaced.csv'
+    path.write_text(' amount , note \n5,\n')
+    inspected = inspect_csv(path)
+    assert inspected['headers'] == ['amount', 'note']
+    assert inspected['null_counts'] == {'amount': 0, 'note': 1}
+    dataset = import_csv(store, inspected)
+    assert [c['name'] for c in get_schema(store.dataset_path(dataset))['records']] == ['amount', 'note']
+    assert run_query(store.dataset_path(dataset), 'SELECT amount, note FROM records')['rows'] == [[5, None]]
+    assert import_csv(store, inspect_csv(path)) == dataset
+
+
+def test_trimming_headers_still_rejects_duplicates_and_reserved_names(tmp_path):
+    path = tmp_path / 'bad-headers.csv'
+    for text in (' amount ,AMOUNT\n1,2\n', ' sqlite_hidden \n1\n'):
+        path.write_text(text)
+        with pytest.raises(ValueError):
+            inspect_csv(path)
+
+
+def test_reimport_normalizes_old_headers_without_mutating_saved_dataset(store, tmp_path):
+    from src.database import get_schema
+    path = tmp_path / 'legacy-spaces.csv'
+    path.write_text(' amount \n5\n')
+    legacy = inspect_csv(path)
+    legacy['headers'] = [' amount ']
+    legacy['null_counts'] = {' amount ': 0}
+    old = import_csv(store, legacy)
+    chat = store.new_chat(old)
+    store.save_definitions(chat, 'amount means total paid.')
+    fresh = import_csv(store, inspect_csv(path))
+    assert fresh != old
+    assert get_schema(store.dataset_path(old))['records'][0]['name'] == ' amount '
+    assert get_schema(store.dataset_path(fresh))['records'][0]['name'] == 'amount'
+    assert store.chat(chat)['dataset_id'] == old
+    assert store.dataset(fresh)['metadata']['confirmed_definitions'] == 'amount means total paid.'
